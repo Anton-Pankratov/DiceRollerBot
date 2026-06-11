@@ -1,0 +1,30 @@
+# Ignore virtual environments
+.venv/
+venv/
+env/
+
+# Ignore SQLite databases
+dnd_bot.db
+data/
+*.db
+
+# Ignore development configuration and secrets
+.env
+.idea/
+.vscode/
+.gemini/
+.git/
+.gitignore
+
+# Ignore build artifacts and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ignore local documentation/logs
+*.log
+artifacts/
