@@ -25,8 +25,9 @@ RUN groupadd -r appgroup && \
 RUN mkdir -p /app/data && \
     chown -R appuser:appgroup /app
 
-# Switch to the non-root user
-USER appuser
+# Copy the entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
-# Start the application
-CMD ["python", "main.py"]
+# Start the application using the entrypoint script (runs as root to fix permissions, then drops to appuser)
+ENTRYPOINT ["/app/entrypoint.sh"]
