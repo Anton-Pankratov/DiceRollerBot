@@ -1,4 +1,5 @@
 import re
+import json
 import uuid
 import asyncio
 import contextvars
@@ -15,6 +16,7 @@ from keyboards.setup_kb import (
     get_saving_throws_keyboard,
     get_skills_keyboard,
     get_tools_keyboard,
+    get_expertise_keyboard,
     get_review_keyboard,
     get_edit_menu_keyboard,
     get_characters_management_keyboard,
@@ -26,7 +28,9 @@ from keyboards.setup_kb import (
     get_chat_topics_keyboard,
     get_bindings_management_keyboard,
     get_bind_options_keyboard,
-    ALL_TOOLS
+    get_character_card_keyboard,
+    ALL_TOOLS,
+    ALL_SKILLS
 )
 from keyboards.roller_kb import get_dice_keyboard, get_dice_keyboard_for_user
 
@@ -45,6 +49,7 @@ class CharacterSetupStates(StatesGroup):
     selecting_saving_throws = State()
     selecting_skills = State()
     selecting_tools = State()
+    selecting_expertise = State()     # Выбор компетентности (навыки/инструменты)
     reviewing_data = State()          # Просмотр и подтверждение данных
     editing_menu = State()            # Выбор поля для изменения
     adding_custom_formula_name = State() # Шаг добавления названия формулы
@@ -64,6 +69,7 @@ CREATION_STATES = {
     CharacterSetupStates.selecting_saving_throws.state,
     CharacterSetupStates.selecting_skills.state,
     CharacterSetupStates.selecting_tools.state,
+    CharacterSetupStates.selecting_expertise.state,
     CharacterSetupStates.reviewing_data.state,
 }
 
@@ -280,6 +286,16 @@ async def prompt_for_creation_state(chat_id: int, bot: Bot, state: FSMContext, s
                  "<i>Когда закончите, нажмите кнопку внизу.</i>",
             reply_markup=get_tools_keyboard(tools)
         )
+    elif state_name == CharacterSetupStates.selecting_expertise.state:
+        skills = data.get("skills", [])
+        tools = data.get("tools", [])
+        expertise = data.get("expertise", [])
+        sent_msg = await bot.send_message(
+            chat_id=chat_id,
+            text="Шаг 13: Выберите <b>навыки и инструменты</b>, в которых ваш персонаж имеет <b>компетентность</b>:\n"
+                 "<i>Когда закончите, нажмите кнопку внизу.</i>",
+            reply_markup=get_expertise_keyboard(skills, tools, expertise)
+        )
     elif state_name == CharacterSetupStates.reviewing_data.state:
         sent_msg = await bot.send_message(
             chat_id=chat_id,
@@ -421,11 +437,24 @@ def parse_modifier(text: str) -> int:
         cleaned = cleaned[1:]
     return int(cleaned)
 
+def _format_items_with_expertise(items: List[str], expertise: List[str]) -> str:
+    if not items:
+        return "нет"
+    formatted = []
+    for item in items:
+        if item in expertise:
+            formatted.append(f"{item} (компетентность)")
+        else:
+            formatted.append(item)
+    return ", ".join(formatted)
+
 def _get_character_review_text(data: dict) -> str:
     """Форматирует красивое резюме персонажа для экрана проверки."""
     saves_str = ", ".join(data.get("saving_throws", [])) if data.get("saving_throws") else "нет"
-    skills_str = ", ".join(data.get("skills", [])) if data.get("skills") else "нет"
-    tools_str = ", ".join(data.get("tools", [])) if data.get("tools") else "нет"
+    
+    expertise = data.get("expertise", [])
+    skills_str = _format_items_with_expertise(data.get("skills", []), expertise)
+    tools_str = _format_items_with_expertise(data.get("tools", []), expertise)
     
     format_mod = lambda v: f"+{v}" if v >= 0 else str(v)
     
@@ -447,6 +476,78 @@ def _get_character_review_text(data: dict) -> str:
         f"🛠️ <b>Владение инструментами:</b> {tools_str}\n\n"
         f"<i>Вы можете подтвердить эти данные или изменить любой из разделов.</i>"
     )
+
+def format_character_card(character: dict) -> str:
+    """Форматирует красивую карточку персонажа (характеристики и владения) одним сообщением."""
+    full_data = character.get("full_data", {})
+    expertise = []
+    if isinstance(full_data, dict):
+        fd_skills = full_data.get("skills", {})
+        if isinstance(fd_skills, dict):
+            for k, v in fd_skills.items():
+                if v == "expert":
+                    expertise.append(k)
+        fd_tools = full_data.get("tools", {})
+        if isinstance(fd_tools, dict):
+            for k, v in fd_tools.items():
+                if v == "expert":
+                    expertise.append(k)
+
+    saves_str = ", ".join(character.get("saving_throws", [])) if character.get("saving_throws") else "нет"
+    skills_str = _format_items_with_expertise(character.get("skills", []), expertise)
+    tools_str = _format_items_with_expertise(character.get("tools", []), expertise)
+    
+    format_mod = lambda v: f"+{v}" if v >= 0 else str(v)
+    
+    # Имя и класс
+    name = character.get("name", "Без имени")
+    char_class = character.get("class", "Обычный бросок")
+    pb = character.get("proficiency_bonus", 0)
+    
+    # Формулы кастомные
+    formulas = character.get("custom_formulas", {})
+    formulas_str = ""
+    if formulas:
+        formulas_list = [f"• <code>{k}</code>: {v}" for k, v in formulas.items()]
+        formulas_str = "\n🧪 <b>Кастомные формулы:</b>\n" + "\n".join(formulas_list) + "\n"
+        
+    return (
+        f"📋 <b>Лист персонажа: {name}</b>\n"
+        f"🛡️ <b>Класс:</b> {char_class} | 🎓 <b>БМ:</b> {format_mod(pb)}\n\n"
+        f"⚔️ <b>Характеристики D&D 5e:</b>\n"
+        f"• Сила: <code>{format_mod(character.get('mod_strength', 0))}</code>\n"
+        f"• Ловкость: <code>{format_mod(character.get('mod_dexterity', 0))}</code>\n"
+        f"• Телосложение: <code>{format_mod(character.get('mod_constitution', 0))}</code>\n"
+        f"• Интеллект: <code>{format_mod(character.get('mod_intelligence', 0))}</code>\n"
+        f"• Мудрость: <code>{format_mod(character.get('mod_wisdom', 0))}</code>\n"
+        f"• Харизма: <code>{format_mod(character.get('mod_charisma', 0))}</code>\n\n"
+        f"🛡️ <b>Владение спасбросками:</b> {saves_str}\n"
+        f"📜 <b>Владение навыками:</b> {skills_str}\n"
+        f"🛠️ <b>Владение инструментами:</b> {tools_str}\n"
+        f"{formulas_str}"
+    )
+
+@router.message(Command("sheet", "character", "my_character"))
+async def cmd_show_sheet(message: Message, state: FSMContext):
+    """Показывает карточку активного персонажа пользователя."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    thread_id = message.message_thread_id
+    
+    character = await DatabaseService.get_bound_character(user_id, chat_id, thread_id)
+    if not character:
+        all_chars = await DatabaseService.get_all_characters(user_id)
+        character = next((c for c in all_chars if c["is_active"] == 1), None)
+        
+    if not character:
+        await message.reply(
+            "⚠️ У вас нет активного персонажа. Создайте его с помощью /create_character или выберите в /characters."
+        )
+        return
+        
+    card_text = format_character_card(character)
+    await message.reply(card_text)
+
 
 # =====================================================================
 # УПРАВЛЕНИЕ СПИСКОМ ПЕРСОНАЖЕЙ (ВЫБОР, СОЗДАНИЕ, УДАЛЕНИЕ, РЕДАКТИРОВАНИЕ)
@@ -512,6 +613,42 @@ async def handle_select_character(callback: CallbackQuery, state: FSMContext):
     except Exception:
         pass
 
+@router.callback_query(F.data == "show_active_char_card")
+async def handle_show_active_char_card(callback: CallbackQuery, state: FSMContext):
+    """Отображает карточку активного персонажа со всеми характеристиками и владениями."""
+    user_id = callback.from_user.id
+    active_char = await DatabaseService.get_character(user_id)
+    if not active_char:
+        await callback.answer("⚠️ У вас нет активного персонажа!", show_alert=True)
+        return
+        
+    card_text = format_character_card(active_char)
+    await callback.message.edit_text(
+        card_text,
+        reply_markup=get_character_card_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_chars_list")
+async def handle_back_to_chars_list(callback: CallbackQuery, state: FSMContext):
+    """Возвращает из карточки персонажа назад к меню списка персонажей."""
+    user_id = callback.from_user.id
+    characters = await DatabaseService.get_all_characters(user_id)
+    active_char = next((c for c in characters if c.get("is_active") == 1), None)
+    active_name = active_char["name"] if active_char else "не выбран"
+    
+    chat_id = callback.message.chat.id
+    thread_id = callback.message.message_thread_id
+    bound_names = await DatabaseService.get_user_bound_character_names(user_id, chat_id, thread_id)
+    
+    await callback.message.edit_text(
+        f"👥 <b>Ваши персонажи:</b>\n"
+        f"Текущий активный персонаж: <b>{active_name}</b>\n\n"
+        f"<i>Кликните на имя персонажа, чтобы сделать его активным для проверок.</i>",
+        reply_markup=get_characters_management_keyboard(characters, bound_char_name=bound_names)
+    )
+    await callback.answer()
+
 @router.callback_query(F.data == "create_new_char")
 async def handle_create_new_character_callback(callback: CallbackQuery, state: FSMContext):
     """Инициализирует мастер создания нового персонажа."""
@@ -559,9 +696,24 @@ async def handle_edit_active_character(callback: CallbackQuery, state: FSMContex
         await callback.answer("⚠️ Нет активного персонажа для редактирования!", show_alert=True)
         return
         
+    full_data = active_char.get("full_data", {})
+    expertise = []
+    if isinstance(full_data, dict):
+        fd_skills = full_data.get("skills", {})
+        if isinstance(fd_skills, dict):
+            for k, v in fd_skills.items():
+                if v == "expert":
+                    expertise.append(k)
+        fd_tools = full_data.get("tools", {})
+        if isinstance(fd_tools, dict):
+            for k, v in fd_tools.items():
+                if v == "expert":
+                    expertise.append(k)
+                    
     await state.clear()
     # Подгружаем все данные в сессию FSM
     await state.update_data(
+        char_id=active_char["id"],
         name=active_char["name"],
         char_class=active_char["class"],
         pb=active_char["proficiency_bonus"],
@@ -573,7 +725,9 @@ async def handle_edit_active_character(callback: CallbackQuery, state: FSMContex
         mod_charisma=active_char["mod_charisma"],
         saving_throws=active_char["saving_throws"],
         skills=active_char["skills"],
-        tools=active_char["tools"]
+        tools=active_char["tools"],
+        expertise=expertise,
+        full_data=full_data
     )
     
     await state.set_state(CharacterSetupStates.editing_menu)
@@ -586,6 +740,85 @@ async def handle_edit_active_character(callback: CallbackQuery, state: FSMContex
         )
     except Exception:
         pass
+
+@router.callback_query(F.data.startswith("edit_field:"))
+async def handle_edit_field(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор конкретного поля для редактирования в меню ✏️ Редактировать."""
+    field = callback.data.split(":", 1)[1]
+    await callback.answer()
+
+    FIELD_TO_STATE = {
+        "name":  CharacterSetupStates.waiting_for_name,
+        "class": CharacterSetupStates.waiting_for_class,
+        "pb":    CharacterSetupStates.waiting_for_pb,
+        "stats": CharacterSetupStates.waiting_for_strength,
+        "saves": CharacterSetupStates.selecting_saving_throws,
+        "skills": CharacterSetupStates.selecting_skills,
+        "tools": CharacterSetupStates.selecting_tools,
+        "expertise": CharacterSetupStates.selecting_expertise,
+    }
+
+    FIELD_PROMPTS = {
+        "name":  "✏️ Введите <b>новое имя</b> персонажа:",
+        "class": "✏️ Введите <b>новый класс</b> или выберите из списка:",
+        "pb":    "✏️ Введите <b>новый бонус мастерства</b> (например: <code>+3</code> или <code>3</code>):",
+        "stats": "✏️ Введите <b>новый модификатор Силы</b> (например: <code>+2</code>, <code>-1</code>):",
+        "saves": "✏️ Отметьте <b>спасброски</b> для вашего персонажа:",
+        "skills": "✏️ Отметьте <b>навыки</b> для вашего персонажа:",
+        "tools": "✏️ Отметьте <b>инструменты</b> для вашего персонажа:",
+        "expertise": "✏️ Отметьте <b>навыки и инструменты</b>, в которых у персонажа компетентность:",
+    }
+
+    target_state = FIELD_TO_STATE.get(field)
+    if not target_state:
+        await callback.answer(f"⚠️ Неизвестное поле: {field}", show_alert=True)
+        return
+
+    await state.update_data(is_editing=True, edit_field=field)
+    await state.set_state(target_state)
+
+    data = await state.get_data()
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    if field == "saves":
+        saves = data.get("saving_throws", [])
+        sent_msg = await callback.message.answer(
+            FIELD_PROMPTS[field] + "\n<i>Когда закончите, нажмите кнопку внизу.</i>",
+            reply_markup=get_saving_throws_keyboard(saves)
+        )
+    elif field == "skills":
+        skills = data.get("skills", [])
+        sent_msg = await callback.message.answer(
+            FIELD_PROMPTS[field] + "\n<i>Когда закончите, нажмите кнопку внизу.</i>",
+            reply_markup=get_skills_keyboard(skills)
+        )
+    elif field == "tools":
+        tools = data.get("tools", [])
+        sent_msg = await callback.message.answer(
+            FIELD_PROMPTS[field] + "\n<i>Когда закончите, нажмите кнопку внизу.</i>",
+            reply_markup=get_tools_keyboard(tools)
+        )
+    elif field == "expertise":
+        skills = data.get("skills", [])
+        tools = data.get("tools", [])
+        expertise = data.get("expertise", [])
+        sent_msg = await callback.message.answer(
+            FIELD_PROMPTS[field] + "\n<i>Когда закончите, нажмите кнопку внизу.</i>",
+            reply_markup=get_expertise_keyboard(skills, tools, expertise)
+        )
+    elif field == "class":
+        sent_msg = await callback.message.answer(
+            FIELD_PROMPTS[field],
+            reply_markup=get_classes_keyboard()
+        )
+    else:
+        sent_msg = await callback.message.answer(FIELD_PROMPTS[field])
+
+    await state.update_data(last_bot_msg_id=sent_msg.message_id)
 
 @router.callback_query(F.data == "delete_char_menu")
 async def handle_delete_char_menu(callback: CallbackQuery, state: FSMContext):
@@ -1224,11 +1457,14 @@ async def finish_skills(callback: CallbackQuery, state: FSMContext):
     
     # Если редактировали навыки
     if data.get("is_editing") and data.get("edit_field") == "skills":
-        await state.update_data(is_editing=False, edit_field=None)
+        skills = data.get("skills", [])
+        tools = data.get("tools", [])
+        expertise = [item for item in data.get("expertise", []) if item in skills or item in tools]
+        await state.update_data(expertise=expertise, is_editing=False, edit_field=None)
         await state.set_state(CharacterSetupStates.reviewing_data)
         await callback.answer("Навыки сохранены!")
         sent_msg = await callback.message.answer(
-            _get_character_review_text(data),
+            _get_character_review_text(await state.get_data()),
             reply_markup=get_review_keyboard()
         )
         await state.update_data(last_bot_msg_id=sent_msg.message_id)
@@ -1369,13 +1605,102 @@ async def finish_character_creation(callback: CallbackQuery, state: FSMContext):
     except Exception:
         pass
     
-    # Всегда очищаем флаги редактирования при выходе на экран обзора
-    await state.update_data(is_editing=False, edit_field=None)
-    await state.set_state(CharacterSetupStates.reviewing_data)
-    await callback.answer("Данные собраны!")
+    # Если редактировали инструменты
+    if data.get("is_editing") and data.get("edit_field") == "tools":
+        skills = data.get("skills", [])
+        tools = data.get("tools", [])
+        expertise = [item for item in data.get("expertise", []) if item in skills or item in tools]
+        await state.update_data(expertise=expertise, is_editing=False, edit_field=None)
+        await state.set_state(CharacterSetupStates.reviewing_data)
+        await callback.answer("Инструменты сохранены!")
+        sent_msg = await callback.message.answer(
+            _get_character_review_text(await state.get_data()),
+            reply_markup=get_review_keyboard()
+        )
+        await state.update_data(last_bot_msg_id=sent_msg.message_id)
+        return
+
+    # Переходим к шагу компетентности (если есть хотя бы один навык или инструмент)
+    skills = data.get("skills", [])
+    tools = data.get("tools", [])
     
+    if skills or tools:
+        await state.update_data(expertise=[])
+        await state.set_state(CharacterSetupStates.selecting_expertise)
+        await callback.answer("Инструменты сохранены!")
+        sent_msg = await callback.message.answer(
+            "Шаг 13: Выберите <b>навыки и инструменты</b>, в которых ваш персонаж имеет <b>компетентность</b>:\n"
+            "<i>Компетентность удваивает бонус мастерства для проверок. Когда закончите, нажмите кнопку внизу.</i>",
+            reply_markup=get_expertise_keyboard(skills, tools, [])
+        )
+        await state.update_data(last_bot_msg_id=sent_msg.message_id)
+    else:
+        await state.update_data(expertise=[])
+        await state.set_state(CharacterSetupStates.reviewing_data)
+        await callback.answer("Данные собраны!")
+        sent_msg = await callback.message.answer(
+            _get_character_review_text(data),
+            reply_markup=get_review_keyboard()
+        )
+        await state.update_data(last_bot_msg_id=sent_msg.message_id)
+
+# Обработка чекбоксов компетентности
+@router.callback_query(StateFilter(CharacterSetupStates.selecting_expertise), F.data.startswith("toggle_exp:"))
+async def toggle_expertise(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("⚠️ Неверный формат callback data.")
+        return
+        
+    item_type = parts[1]
+    idx_str = parts[2]
+    
+    try:
+        idx = int(idx_str)
+        if item_type == "s":
+            item = ALL_SKILLS[idx]
+        elif item_type == "t":
+            item = ALL_TOOLS[idx]
+        else:
+            raise ValueError("Invalid item type")
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ Ошибка: элемент не найден.")
+        return
+        
+    data = await state.get_data()
+    expertise = list(data.get("expertise", []))
+    
+    if item in expertise:
+        expertise.remove(item)
+    else:
+        expertise.append(item)
+        
+    await state.update_data(expertise=expertise)
+    await callback.answer(f"Изменено: {item}")
+    try:
+        skills = data.get("skills", [])
+        tools = data.get("tools", [])
+        await callback.message.edit_reply_markup(
+            reply_markup=get_expertise_keyboard(skills, tools, expertise)
+        )
+    except Exception:
+        pass
+
+@router.callback_query(StateFilter(CharacterSetupStates.selecting_expertise), F.data == "done_expertise")
+async def finish_expertise(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    if data.get("is_editing") and data.get("edit_field") == "expertise":
+        await state.update_data(is_editing=False, edit_field=None)
+        
+    await state.set_state(CharacterSetupStates.reviewing_data)
+    await callback.answer("Компетентность сохранена!")
     sent_msg = await callback.message.answer(
-        _get_character_review_text(data),
+        _get_character_review_text(await state.get_data()),
         reply_markup=get_review_keyboard()
     )
     await state.update_data(last_bot_msg_id=sent_msg.message_id)
@@ -1384,10 +1709,62 @@ async def finish_character_creation(callback: CallbackQuery, state: FSMContext):
 # ОБРАБОТЧИКИ ЭКРАНА ОБЗОРА И ПОДТВЕРЖДЕНИЯ ДАННЫХ (reviewing_data)
 # =====================================================================
 
+@router.callback_query(F.data == "review_edit")
+async def handle_review_edit(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает нажатие кнопки '✏️ Нужны правки' на экране обзора."""
+    await state.set_state(CharacterSetupStates.editing_menu)
+    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            "✏️ <b>Редактирование персонажа</b>\n\nВыберите, какой раздел вы хотите изменить:",
+            reply_markup=get_edit_menu_keyboard()
+        )
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "edit_back_to_review")
+async def handle_edit_back_to_review(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает нажатие кнопки '⬅️ Назад к обзору' в меню редактирования."""
+    data = await state.get_data()
+    await state.set_state(CharacterSetupStates.reviewing_data)
+    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            _get_character_review_text(data),
+            reply_markup=get_review_keyboard()
+        )
+    except Exception:
+        pass
+
 @router.callback_query(StateFilter(CharacterSetupStates.reviewing_data), F.data == "review_confirm")
 async def confirm_character_data(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     user_id = callback.from_user.id
+    
+    # Формируем full_data с учетом выбранной компетентности
+    existing_full_data = data.get("full_data", {})
+    if not isinstance(existing_full_data, dict):
+        existing_full_data = {}
+        
+    skills_list = data.get("skills", [])
+    tools_list = data.get("tools", [])
+    expertise_list = data.get("expertise", [])
+    
+    existing_full_data["skills"] = {s: ("expert" if s in expertise_list else "proficient") for s in skills_list}
+    existing_full_data["tools"] = {t: ("expert" if t in expertise_list else "proficient") for t in tools_list}
+    
+    existing_full_data["name"] = data["name"]
+    existing_full_data["class"] = data["char_class"]
+    existing_full_data["proficiency_bonus"] = data["pb"]
+    existing_full_data["mod_strength"] = data["mod_strength"]
+    existing_full_data["mod_dexterity"] = data["mod_dexterity"]
+    existing_full_data["mod_constitution"] = data["mod_constitution"]
+    existing_full_data["mod_intelligence"] = data["mod_intelligence"]
+    existing_full_data["mod_wisdom"] = data["mod_wisdom"]
+    existing_full_data["mod_charisma"] = data["mod_charisma"]
+    existing_full_data["saving_throws"] = data.get("saving_throws", [])
+    
+    full_data_str = json.dumps(existing_full_data, ensure_ascii=False)
     
     # Сохраняем в базу данных
     await DatabaseService.save_character(
@@ -1403,7 +1780,9 @@ async def confirm_character_data(callback: CallbackQuery, state: FSMContext):
         mod_charisma=data["mod_charisma"],
         saving_throws=data.get("saving_throws", []),
         skills=data.get("skills", []),
-        tools=data.get("tools", [])
+        tools=data.get("tools", []),
+        full_data=full_data_str,
+        char_id=data.get("char_id")
     )
     
     # Очищаем сессионный ID создания, так как персонаж создан и сохранен!

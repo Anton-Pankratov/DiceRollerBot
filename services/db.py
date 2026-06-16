@@ -6,6 +6,7 @@ import hmac
 from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 import base64
+import config
 from config import DB_SALT
 from cryptography.fernet import Fernet
 
@@ -29,7 +30,8 @@ def decrypt_val(val: Optional[str]) -> Optional[str]:
         return val
 
 # Путь к файлу базы данных SQLite
-DB_PATH = Path(os.getenv("DB_PATH", Path(__file__).resolve().parent.parent / "dnd_bot.db"))
+db_filename = "dnd_bot_test.db" if getattr(config, "BOT_MODE", "prod") == "test" else "dnd_bot.db"
+DB_PATH = Path(os.getenv("DB_PATH", Path(__file__).resolve().parent.parent / db_filename))
 
 def _hash_user_id(user_id: int) -> str:
     """
@@ -81,10 +83,17 @@ class DatabaseService:
                     tools TEXT NOT NULL,                 -- JSON-список владений инструментами
                     custom_formulas TEXT NOT NULL DEFAULT '{}', -- JSON-словарь именованных кастомных бросков
                     is_active INTEGER DEFAULT 0,         -- 1 для активного персонажа, 0 для неактивного
+                    full_data TEXT DEFAULT '{}',         -- Полные JSON данные листа персонажа Mini App
                     UNIQUE(user_id, name)
                 )
             """)
             
+            # Миграция: Проверка наличия колонки full_data в таблице characters
+            cursor_cols = await db.execute("PRAGMA table_info(characters)")
+            cols = await cursor_cols.fetchall()
+            if not any(col[1] == 'full_data' for col in cols):
+                await db.execute("ALTER TABLE characters ADD COLUMN full_data TEXT DEFAULT '{}'")
+
             # Миграция таблицы char_bindings: переход к PRIMARY KEY (user_id, chat_id, thread_id, char_name)
             # Это позволяет привязывать несколько персонажей пользователя к одному чату/теме,
             # а также привязывать персонажа к нескольким чатам/темам.
@@ -189,8 +198,10 @@ class DatabaseService:
         saving_throws: List[str],
         skills: List[str],
         tools: List[str],
-        custom_formulas: Dict[str, str] = None
-    ) -> bool:
+        custom_formulas: Dict[str, str] = None,
+        full_data: str = '{}',
+        char_id: Optional[int] = None
+    ) -> int:
         """Сохраняет или обновляет лист персонажа для пользователя (с автоматическим хешированием user_id)."""
         hashed_id = _hash_user_id(user_id)
         if custom_formulas is None:
@@ -205,46 +216,86 @@ class DatabaseService:
             
             # Получаем существующие кастомные формулы, если мы обновляем персонажа, чтобы не затереть их
             existing_formulas = "{}"
-            cursor = await db.execute(
-                "SELECT custom_formulas FROM characters WHERE user_id = ? AND name = ?",
-                (hashed_id, name)
-            )
+            if char_id is not None:
+                cursor = await db.execute(
+                    "SELECT custom_formulas FROM characters WHERE id = ? AND user_id = ?",
+                    (char_id, hashed_id)
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT custom_formulas FROM characters WHERE user_id = ? AND name = ?",
+                    (hashed_id, name)
+                )
             row = await cursor.fetchone()
             if row:
                 existing_formulas = row[0]
                 
             formulas_json = json.dumps(custom_formulas, ensure_ascii=False) if custom_formulas else existing_formulas
             
-            # Используем INSERT OR REPLACE. У игрока не может быть двух персонажей с одинаковым именем.
-            query = """
-                INSERT OR REPLACE INTO characters (
-                    user_id, name, class, proficiency_bonus, 
-                    mod_strength, mod_dexterity, mod_constitution,
-                    mod_intelligence, mod_wisdom, mod_charisma,
-                    saving_throws, skills, tools, custom_formulas, is_active
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-            """
-            await db.execute(
-                query,
-                (
-                    hashed_id,
-                    name,
-                    char_class,
-                    proficiency_bonus,
-                    mod_strength,
-                    mod_dexterity,
-                    mod_constitution,
-                    mod_intelligence,
-                    mod_wisdom,
-                    mod_charisma,
-                    json.dumps(saving_throws, ensure_ascii=False),
-                    json.dumps(skills, ensure_ascii=False),
-                    json.dumps(tools, ensure_ascii=False),
-                    formulas_json
+            updated = False
+            saved_id = char_id
+            if char_id is not None:
+                # Пробуем обновить существующую запись по ID
+                query = """
+                    UPDATE characters SET
+                        name = ?, class = ?, proficiency_bonus = ?, 
+                        mod_strength = ?, mod_dexterity = ?, mod_constitution = ?,
+                        mod_intelligence = ?, mod_wisdom = ?, mod_charisma = ?,
+                        saving_throws = ?, skills = ?, tools = ?, custom_formulas = ?,
+                        is_active = 1, full_data = ?
+                    WHERE id = ? AND user_id = ?
+                """
+                cursor = await db.execute(
+                    query,
+                    (
+                        name, char_class, proficiency_bonus,
+                        mod_strength, mod_dexterity, mod_constitution,
+                        mod_intelligence, mod_wisdom, mod_charisma,
+                        json.dumps(saving_throws, ensure_ascii=False),
+                        json.dumps(skills, ensure_ascii=False),
+                        json.dumps(tools, ensure_ascii=False),
+                        formulas_json,
+                        full_data,
+                        char_id,
+                        hashed_id
+                    )
                 )
-            )
+                if cursor.rowcount > 0:
+                    updated = True
+
+            if not updated:
+                # Используем INSERT OR REPLACE. У игрока не может быть двух персонажей с одинаковым именем.
+                query = """
+                    INSERT OR REPLACE INTO characters (
+                        user_id, name, class, proficiency_bonus, 
+                        mod_strength, mod_dexterity, mod_constitution,
+                        mod_intelligence, mod_wisdom, mod_charisma,
+                        saving_throws, skills, tools, custom_formulas, is_active, full_data
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                """
+                cursor = await db.execute(
+                    query,
+                    (
+                        hashed_id,
+                        name,
+                        char_class,
+                        proficiency_bonus,
+                        mod_strength,
+                        mod_dexterity,
+                        mod_constitution,
+                        mod_intelligence,
+                        mod_wisdom,
+                        mod_charisma,
+                        json.dumps(saving_throws, ensure_ascii=False),
+                        json.dumps(skills, ensure_ascii=False),
+                        json.dumps(tools, ensure_ascii=False),
+                        formulas_json,
+                        full_data
+                    )
+                )
+                saved_id = cursor.lastrowid
             await db.commit()
-        return True
+        return saved_id
 
     @staticmethod
     async def get_character(user_id: int) -> Optional[Dict[str, Any]]:
@@ -264,6 +315,7 @@ class DatabaseService:
                 character["skills"] = json.loads(character["skills"])
                 character["tools"] = json.loads(character["tools"])
                 character["custom_formulas"] = json.loads(character["custom_formulas"])
+                character["full_data"] = json.loads(character.get("full_data", "{}") or "{}")
                 return character
 
     @staticmethod
@@ -282,6 +334,7 @@ class DatabaseService:
                     char_dict["skills"] = json.loads(char_dict["skills"])
                     char_dict["tools"] = json.loads(char_dict["tools"])
                     char_dict["custom_formulas"] = json.loads(char_dict["custom_formulas"])
+                    char_dict["full_data"] = json.loads(char_dict.get("full_data", "{}") or "{}")
                     characters.append(char_dict)
                 return characters
 
@@ -565,6 +618,7 @@ class DatabaseService:
             character["skills"] = json.loads(character["skills"])
             character["tools"] = json.loads(character["tools"])
             character["custom_formulas"] = json.loads(character["custom_formulas"])
+            character["full_data"] = json.loads(character.get("full_data", "{}") or "{}")
             return character
 
     @staticmethod
@@ -600,6 +654,7 @@ class DatabaseService:
             character["skills"] = json.loads(character["skills"])
             character["tools"] = json.loads(character["tools"])
             character["custom_formulas"] = json.loads(character["custom_formulas"])
+            character["full_data"] = json.loads(character.get("full_data", "{}") or "{}")
             return character
 
     @staticmethod

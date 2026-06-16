@@ -241,15 +241,64 @@ async def handle_roll_formula_callback(callback: CallbackQuery, state: FSMContex
         raw_d20=raw_d20
     )
     markup = await _get_kb(callback, "normal")
+    
+    # В групповых чатах отключаем отправку клавиатуры, если отвечаем не на исходное сообщение
+    # того же самого игрока, или если сообщения-источника вообще нет.
+    target_markup = markup
+    if callback.message.chat.type != "private":
+        if callback.message.reply_to_message:
+            if callback.message.reply_to_message.from_user.id != callback.from_user.id:
+                target_markup = None
+        else:
+            target_markup = None
+
     if callback.message.reply_to_message:
-        await callback.message.reply_to_message.reply(report, reply_markup=markup)
+        await callback.message.reply_to_message.reply(report, reply_markup=target_markup)
     else:
         mention = callback.from_user.mention_html()
-        await callback.message.answer(f"{mention}\n\n{report}", reply_markup=markup)
+        await callback.message.answer(f"{mention}\n\n{report}", reply_markup=target_markup)
 
 # =====================================================================
 # ОСНОВНОЙ ОБРАБОТЧИК ТЕКСТОВОГО ВВОДА
 # =====================================================================
+
+
+def find_attribute_key(text: str) -> Optional[str]:
+    """
+    Определяет ключ характеристики D&D 5e из текста на русском языке,
+    учитывая различные падежные окончания и сокращения (сил, ловк, конст, инт, муд, хар).
+    """
+    t = text.lower().strip()
+    
+    # 1. Телосложение / Конституция / Конста / Тело
+    if "телосложен" in t or "тело" in t or "конституц" in t or "конст" in t or t == "тел":
+        return "телосложение"
+        
+    # 2. Интеллект / Инт
+    if "интеллект" in t or "инт" in t:
+        return "интеллект"
+        
+    # 3. Ловкость / Ловк
+    # Важно: "ловкость рук" - это НАВЫК, а не характеристика.
+    # Мы не должны матчить его как характеристику напрямую.
+    if "ловкость рук" not in t:
+        if "ловкост" in t or "ловкос" in t or "ловк" in t:
+            return "ловкость"
+            
+    # 4. Мудрость / Муд
+    if "мудрост" in t or "муд" in t:
+        return "мудрость"
+        
+    # 5. Харизма / Хар
+    if "харизм" in t or "хар" in t:
+        return "харизма"
+        
+    # 6. Сила / Сил
+    if "сила" in t or "силы" in t or "сило" in t or "сил" in t:
+        return "сила"
+        
+    return None
+
 
 
 def get_check_emoji_and_title(check_type: str) -> tuple[str, str]:
@@ -265,10 +314,9 @@ def get_check_emoji_and_title(check_type: str) -> tuple[str, str]:
     # 1. Спасбросок
     if "спас" in clean:
         attr_name = "Спасбросок"
-        for key, info in ATTR_MAPPING.items():
-            if key in clean:
-                attr_name = f"Спасбросок {info['name']}"
-                break
+        attr_key = find_attribute_key(clean)
+        if attr_key:
+            attr_name = f"Спасбросок {ATTR_MAPPING[attr_key]['name']}"
         prefix = "👁️ Пассивный " if is_passive else ""
         return "🛡️", f"{prefix}{attr_name}"
         
@@ -285,10 +333,10 @@ def get_check_emoji_and_title(check_type: str) -> tuple[str, str]:
             return "🛠️", f"{prefix}Инструмент: {val}"
             
     # 4. Характеристика
-    for key, info in ATTR_MAPPING.items():
-        if key in clean:
-            prefix = "👁️ Пассивная " if is_passive else ""
-            return "⚔️", f"{prefix}Характеристика: {info['name']}"
+    attr_key = find_attribute_key(clean)
+    if attr_key:
+        prefix = "👁️ Пассивная " if is_passive else ""
+        return "⚔️", f"{prefix}Характеристика: {ATTR_MAPPING[attr_key]['name']}"
             
     return "🎲", f"{check_type}"
 
@@ -309,15 +357,61 @@ def format_roll_report(
         elif raw_d20 == 20:
             crit_suffix = " 🟢 Критический успех!"
             
-    identity = f"{user_mention}"
-    if char_name and char_name != "DUMMY":
-        identity = f"{user_mention} | {char_name}"
-            
-    return (
-        f"{check_icon} <b>{check_title}</b>\n"
-        f"👤 {identity}\n"
-        f"🎲 {formula_exp} ➔ <b>{total}</b>{crit_suffix}"
-    )
+    # Очищаем check_title от лишних префиксов по просьбе пользователя
+    title = check_title
+    for prefix_to_remove in [
+        "Проверка навыка: ", "Проверка характеристики: ", "Проверка инструментов: ",
+        "Навык: ", "Характеристика: ", "Инструмент: "
+    ]:
+        title = title.replace(prefix_to_remove, "")
+        
+    for prefix_to_replace in [
+        "Пассивная проверка навыка: ", "Пассивная проверка: ",
+        "Пассивный Навык: ", "Пассивная Характеристика: ", "Пассивная Инструмент: ",
+        "👁️ Пассивная проверка навыка: ", "👁️ Пассивная проверка: ", "👁️ Пассивный Навык: "
+    ]:
+        title = title.replace(prefix_to_replace, "👁️ Пассивная ")
+
+    char_part = f" | {char_name}" if char_name and char_name not in ["DUMMY", "Без персонажа"] else ""
+    first_line = f"{user_mention} <b>{total}</b>{crit_suffix} ({title}{char_part})"
+    second_line = f"<blockquote expandable>{formula_exp}</blockquote>"
+    
+    return f"{first_line}\n{second_line}"
+
+async def send_roll_response(message: Message, text: str, reply_markup=None) -> Optional[Message]:
+    """
+    Отправляет результат проверки.
+    Если сообщение пользователя является ответом на другое сообщение (reply_to_message),
+    то бот отвечает на исходное сообщение, а сообщение с формулой удаляет.
+    Иначе — просто отвечает обычным reply на сообщение с формулой.
+    """
+    sent_msg = None
+    if message.reply_to_message:
+        try:
+            # Если мы отвечаем на чужое сообщение в группе, отключаем reply_markup,
+            # чтобы клавиатура не перезаписала раскладку другому игроку!
+            target_markup = reply_markup
+            if message.reply_to_message.from_user.id != message.from_user.id:
+                target_markup = None
+                
+            sent_msg = await message.reply_to_message.reply(text, reply_markup=target_markup)
+            await message.delete()
+        except Exception as e:
+            # На случай, если не хватает прав на удаление или исходное сообщение было удалено
+            import logging
+            logging.getLogger(__name__).warning(f"Error in send_roll_response (reply mode): {e}")
+            try:
+                # В случае неудачи при ответе на исходное, отвечаем непосредственно пользователю
+                sent_msg = await message.reply(text, reply_markup=reply_markup)
+            except Exception as e2:
+                logging.getLogger(__name__).error(f"Failed to fallback send: {e2}")
+    else:
+        try:
+            sent_msg = await message.reply(text, reply_markup=reply_markup)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error in send_roll_response (normal mode): {e}")
+    return sent_msg
 
 @router.message(Command("roll"))
 async def cmd_roll(message: Message, state: FSMContext):
@@ -396,7 +490,7 @@ async def evaluate_check_for_character(
                 raw_d20=chosen
             )
             await state.update_data(roll_mode="normal")
-            await message.reply(report, reply_markup=kb_markup)
+            await send_roll_response(message, report, reply_markup=kb_markup)
             return
             
         result_data = DiceRollerService.parse_and_roll(raw_text)
@@ -417,10 +511,14 @@ async def evaluate_check_for_character(
         try:
             total, rolls, mod, formula_str = roll_custom_formula(expr)
             # Пытаемся определить количество граней и выпавший результат для отправки стикера
+            sides_val = 0
+            num_dice = 0
             try:
                 match = FORMULA_PATTERN.match(expr.replace(" ", "").lower())
                 if match:
-                    sides_val = int(match.group(2))
+                    num_dice_str, sides_str, sign, mod_str = match.groups()
+                    num_dice = int(num_dice_str) if num_dice_str else 1
+                    sides_val = int(sides_str)
                     result_val = rolls[0] if len(rolls) == 1 else None
                     await _send_dice_sticker(message, sides_val, result_val)
             except Exception:
@@ -437,7 +535,7 @@ async def evaluate_check_for_character(
                 raw_d20=raw_d20
             )
             await state.update_data(roll_mode="normal") # Сбрасываем временный режим преимущества/помехи
-            await message.reply(report, reply_markup=kb_markup)
+            await send_roll_response(message, report, reply_markup=kb_markup)
             return
         except Exception as e:
             await message.reply(f"⚠️ Ошибка броска формулы: {e}", reply_markup=kb_markup)
@@ -462,15 +560,6 @@ async def evaluate_check_for_character(
 
     # 6. Парсинг Альтернативной/Взаимозаменяемой характеристики
     override_attr = None
-    for attr_key in ATTR_MAPPING.keys():
-        if attr_key in clean_text:
-            # Если вся строка состоит только из названия характеристики, то это прямая проверка, а не альтернативная
-            if clean_text == attr_key:
-                break
-            override_attr = attr_key
-            clean_text = clean_text.replace(attr_key, "").strip()
-            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-            break
 
     # Функция генерации броска d20 с учетом преимущества/помехи/пассивности
     async def make_d20_roll() -> tuple[int, str]:
@@ -506,16 +595,73 @@ async def evaluate_check_for_character(
     # Сбрасываем временный режим
     await state.update_data(roll_mode="normal")
 
+    # 6.5. Проверяем Инициативу
+    if clean_text in ["инициатива", "инициативу", "init", "initiative"]:
+        modifier = character.get("mod_dexterity", 0)
+        d20_roll, roll_text = await make_d20_roll()
+        total = d20_roll + modifier + custom_mod
+        
+        formula_parts = [roll_text]
+        formula_parts.append(f"{format_mod(modifier)} (Ловкость)")
+        if custom_mod:
+            formula_parts.append(f"{format_mod(custom_mod)} (врем)")
+        formula_exp = " + ".join(formula_parts).replace(" + -", " - ").replace(" + +", " + ")
+        
+        char_name_val = character["name"] if (character and character != DUMMY_CHARACTER) else None
+        report = format_roll_report(
+            user_mention=user_name,
+            char_name=char_name_val,
+            check_icon="⏱️",
+            check_title="Инициатива",
+            formula_exp=formula_exp,
+            total=total,
+            raw_d20=d20_roll,
+            is_passive=is_passive
+        )
+        
+        # Интеграция с GM-проверками
+        detail_str = f"{d20_roll} {format_mod(modifier)} (Ловкость)"
+        if custom_mod:
+            detail_str += f" {format_mod(custom_mod)} (врем)"
+        sent_msg = await send_roll_response(message, report, reply_markup=kb_markup)
+        if sent_msg:
+            await check_and_update_gm_request(message, character, "Инициатива", total, detail_str, sent_msg.message_id)
+        return
+
+    # 6.6. Проверяем Спасбросок от смерти
+    if clean_text in ["спасбросок от смерти", "спас от смерти", "death save", "death saving throw"]:
+        d20_roll, roll_text = await make_d20_roll()
+        total = d20_roll + custom_mod
+        
+        formula_parts = [roll_text]
+        if custom_mod:
+            formula_parts.append(f"{format_mod(custom_mod)} (врем)")
+        formula_exp = " + ".join(formula_parts).replace(" + -", " - ").replace(" + +", " + ")
+        
+        char_name_val = character["name"] if (character and character != DUMMY_CHARACTER) else None
+        report = format_roll_report(
+            user_mention=user_name,
+            char_name=char_name_val,
+            check_icon="💀",
+            check_title="Спасбросок от смерти",
+            formula_exp=formula_exp,
+            total=total,
+            raw_d20=d20_roll,
+            is_passive=is_passive
+        )
+        
+        # Интеграция с GM-проверками
+        detail_str = f"{d20_roll}"
+        if custom_mod:
+            detail_str += f" {format_mod(custom_mod)} (врем)"
+        sent_msg = await send_roll_response(message, report, reply_markup=kb_markup)
+        if sent_msg:
+            await check_and_update_gm_request(message, character, "Спасбросок от смерти", total, detail_str, sent_msg.message_id)
+        return
+
     # 7. Проверяем Спасброски
     if clean_text.startswith("спасбросок ") or clean_text.endswith("спасбросок") or "спас" in clean_text:
-        attr_key = None
-        if override_attr:
-            attr_key = override_attr
-        else:
-            for key in ATTR_MAPPING.keys():
-                if key in clean_text or key in raw_text.lower():
-                    attr_key = key
-                    break
+        attr_key = find_attribute_key(clean_text)
         
         if attr_key in ATTR_MAPPING:
             attr_info = ATTR_MAPPING[attr_key]
@@ -533,7 +679,7 @@ async def evaluate_check_for_character(
             title_prefix = "Пассивный спасбросок" if is_passive else "Спасбросок"
             
             formula_parts = [roll_text]
-            if modifier: formula_parts.append(f"{format_mod(modifier)} (мод)")
+            formula_parts.append(f"{format_mod(modifier)} ({attr_name})")
             if pb: formula_parts.append(f"+{pb} (мастерство)")
             if custom_mod: formula_parts.append(f"{format_mod(custom_mod)} (врем)")
             formula_exp = " + ".join(formula_parts).replace(" + -", " - ").replace(" + +", " + ")
@@ -554,8 +700,9 @@ async def evaluate_check_for_character(
             detail_str = f"{d20_roll} {format_mod(modifier)} (мод)"
             if pb: detail_str += f" + {pb} (мастерство)"
             if custom_mod: detail_str += f" {format_mod(custom_mod)} (врем)"
-            sent_msg = await message.reply(report, reply_markup=kb_markup)
-            await check_and_update_gm_request(message, character, f"Спасбросок {attr_name}", total, detail_str, sent_msg.message_id)
+            sent_msg = await send_roll_response(message, report, reply_markup=kb_markup)
+            if sent_msg:
+                await check_and_update_gm_request(message, character, f"Спасбросок {attr_name}", total, detail_str, sent_msg.message_id)
             return
 
     # 8. Проверяем Навыки
@@ -569,6 +716,9 @@ async def evaluate_check_for_character(
         skill_info = SKILL_MAPPING[matched_skill_key]
         skill_name = skill_info["name"]
         
+        remaining_text = clean_text.replace(matched_skill_key, "").strip()
+        override_attr = find_attribute_key(remaining_text)
+        
         if override_attr:
             attr_key = override_attr
             display_name = f"{skill_name} ({ATTR_MAPPING[attr_key]['name']})"
@@ -580,19 +730,59 @@ async def evaluate_check_for_character(
         db_field = attr_info["db_field"]
         
         modifier = character[db_field]
-        is_proficient = skill_name in character["skills"]
-        pb = character["proficiency_bonus"] if is_proficient else 0
         
+        # Определяем уровень владения навыком
+        prof_level = "none"
+        full_data = character.get("full_data", {})
+        if isinstance(full_data, dict) and "skills" in full_data:
+            fd_skills = full_data["skills"]
+            if isinstance(fd_skills, dict):
+                prof_level = fd_skills.get(skill_name, "none")
+            elif isinstance(fd_skills, list):
+                if skill_name in fd_skills:
+                    prof_level = "proficient"
+        else:
+            if skill_name in character.get("skills", []):
+                prof_level = "proficient"
+                
+        pb = character.get("proficiency_bonus", 0)
+        
+        added_pb = 0
+        added_exp = 0
+        added_half = 0
+        
+        if prof_level == "proficient":
+            added_pb = pb
+        elif prof_level == "expert":
+            added_pb = pb
+            added_exp = pb
+        elif prof_level == "half":
+            added_half = pb // 2
+            
         d20_roll, roll_text = await make_d20_roll()
-        total = d20_roll + modifier + pb + custom_mod
+        total = d20_roll + modifier + added_pb + added_exp + added_half + custom_mod
         
-        pb_text = f"\n🎓 Бонус мастерства: <b>+{pb}</b> (Владение)" if is_proficient else ""
+        pb_text = ""
+        if prof_level == "proficient":
+            pb_text = f"\n🎓 Бонус мастерства: <b>+{pb}</b> (Владение)"
+        elif prof_level == "expert":
+            pb_text = f"\n🎓 Бонус мастерства: <b>+{pb*2}</b> (Экспертность)"
+        elif prof_level == "half":
+            pb_text = f"\n🎓 Бонус мастерства: <b>+{pb//2}</b> (Полу-владение)"
+            
         title_prefix = "Пассивная проверка навыка" if is_passive else "Проверка навыка"
         
         formula_parts = [roll_text]
-        if modifier: formula_parts.append(f"{format_mod(modifier)} (мод)")
-        if pb: formula_parts.append(f"+{pb} (мастерство)")
-        if custom_mod: formula_parts.append(f"{format_mod(custom_mod)} (врем)")
+        formula_parts.append(f"{format_mod(modifier)} ({attr_info['name']})")
+        if added_pb:
+            formula_parts.append(f"+{added_pb} (владение)")
+        if added_exp:
+            formula_parts.append(f"+{added_exp} (экспертность)")
+        if added_half:
+            formula_parts.append(f"+{added_half} (полу-владение)")
+        if custom_mod:
+            formula_parts.append(f"{format_mod(custom_mod)} (врем)")
+            
         formula_exp = " + ".join(formula_parts).replace(" + -", " - ").replace(" + +", " + ")
 
         char_name_val = character["name"] if (character and character != DUMMY_CHARACTER) else None
@@ -608,11 +798,20 @@ async def evaluate_check_for_character(
         )
         
         # Интеграция с GM-проверками
-        detail_str = f"{d20_roll} {format_mod(modifier)} ({attr_info['name']})"
-        if pb: detail_str += f" + {pb} (мастерство)"
-        if custom_mod: detail_str += f" {format_mod(custom_mod)} (врем)"
-        sent_msg = await message.reply(report, reply_markup=kb_markup)
-        await check_and_update_gm_request(message, character, skill_name, total, detail_str, sent_msg.message_id)
+        detail_parts = [f"{d20_roll}", f"{format_mod(modifier)} ({attr_info['name']})"]
+        if added_pb:
+            detail_parts.append(f"+{added_pb} (владение)")
+        if added_exp:
+            detail_parts.append(f"+{added_exp} (экспертность)")
+        if added_half:
+            detail_parts.append(f"+{added_half} (полу-владение)")
+        if custom_mod:
+            detail_parts.append(f"{format_mod(custom_mod)} (врем)")
+        detail_str = " + ".join(detail_parts).replace(" + -", " - ").replace(" + +", " + ")
+        
+        sent_msg = await send_roll_response(message, report, reply_markup=kb_markup)
+        if sent_msg:
+            await check_and_update_gm_request(message, character, skill_name, total, detail_str, sent_msg.message_id)
         return
 
     # 9. Проверяем Владение Инструментами
@@ -625,17 +824,64 @@ async def evaluate_check_for_character(
     if matched_tool_key:
         tool_name = TOOL_MATCH_MAP[matched_tool_key]
         
+        # Определяем уровень владения инструментом
+        prof_level = "none"
         is_proficient = any(t.lower() == tool_name.lower() for t in character["tools"])
-        pb = character["proficiency_bonus"] if is_proficient else 0
+        full_data = character.get("full_data", {})
+        if isinstance(full_data, dict) and "tools" in full_data:
+            fd_tools = full_data["tools"]
+            if isinstance(fd_tools, dict):
+                prof_level = fd_tools.get(tool_name, "none")
+                if prof_level == "none":
+                    for k, v in fd_tools.items():
+                        if k.lower() == tool_name.lower():
+                            prof_level = v
+                            break
+            elif isinstance(fd_tools, list):
+                if any(t.lower() == tool_name.lower() for t in fd_tools):
+                    prof_level = "proficient"
+        else:
+            if is_proficient:
+                prof_level = "proficient"
+                
+        pb = character["proficiency_bonus"]
+        added_pb = 0
+        added_exp = 0
         
+        if prof_level == "proficient":
+            added_pb = pb
+        elif prof_level == "expert":
+            added_pb = pb
+            added_exp = pb
+            
+        total_pb = added_pb + added_exp
+        
+        remaining_text = clean_text.replace(matched_tool_key, "").strip()
+        override_attr = find_attribute_key(remaining_text)
+        
+        modifier = 0
+        attr_info_name = ""
+        if override_attr:
+            attr_info = ATTR_MAPPING[override_attr]
+            modifier = character[attr_info["db_field"]]
+            attr_info_name = f" ({attr_info['name']})"
+            
         d20_roll, roll_text = await make_d20_roll()
-        total = d20_roll + pb + custom_mod
+        total = d20_roll + modifier + total_pb + custom_mod
         
-        pb_text = f"\n🎓 Бонус мастерства: <b>+{pb}</b> (Владение)" if is_proficient else "\n❌ Бонус мастерства: <b>+0</b> (Нет владения)"
+        if prof_level == "expert":
+            pb_text = f"\n🎓 Бонус мастерства: <b>+{total_pb}</b> (Компетентность)"
+        elif prof_level == "proficient":
+            pb_text = f"\n🎓 Бонус мастерства: <b>+{total_pb}</b> (Владение)"
+        else:
+            pb_text = f"\n❌ Бонус мастерства: <b>+0</b> (Нет владения)"
+            
         title_prefix = "Пассивная проверка" if is_passive else "Проверка инструментов"
         
         formula_parts = [roll_text]
-        if pb: formula_parts.append(f"+{pb} (мастерство)")
+        if modifier: formula_parts.append(f"{format_mod(modifier)} (мод)")
+        if added_pb: formula_parts.append(f"+{added_pb} (мастерство)")
+        if added_exp: formula_parts.append(f"+{added_exp} (компетентность)")
         if custom_mod: formula_parts.append(f"{format_mod(custom_mod)} (врем)")
         formula_exp = " + ".join(formula_parts).replace(" + -", " - ").replace(" + +", " + ")
 
@@ -644,7 +890,7 @@ async def evaluate_check_for_character(
             user_mention=user_name,
             char_name=char_name_val,
             check_icon="🛠️",
-            check_title=f"{title_prefix}: {tool_name}",
+            check_title=f"{title_prefix}: {tool_name}{attr_info_name}",
             formula_exp=formula_exp,
             total=total,
             raw_d20=d20_roll,
@@ -653,18 +899,16 @@ async def evaluate_check_for_character(
         
         # Интеграция с GM-проверками
         detail_str = f"{d20_roll}"
+        if modifier: detail_str += f" {format_mod(modifier)} (мод)"
         if pb: detail_str += f" + {pb} (мастерство)"
         if custom_mod: detail_str += f" {format_mod(custom_mod)} (врем)"
-        sent_msg = await message.reply(report, reply_markup=kb_markup)
-        await check_and_update_gm_request(message, character, tool_name, total, detail_str, sent_msg.message_id)
+        sent_msg = await send_roll_response(message, report, reply_markup=kb_markup)
+        if sent_msg:
+            await check_and_update_gm_request(message, character, tool_name, total, detail_str, sent_msg.message_id)
         return
 
     # 10. Проверяем Характеристики напрямую
-    attr_key = None
-    for key in ATTR_MAPPING.keys():
-        if key in clean_text:
-            attr_key = key
-            break
+    attr_key = find_attribute_key(clean_text)
             
     if attr_key:
         attr_info = ATTR_MAPPING[attr_key]
@@ -679,7 +923,7 @@ async def evaluate_check_for_character(
         title_prefix = "Пассивная проверка" if is_passive else "Проверка характеристики"
         
         formula_parts = [roll_text]
-        if modifier: formula_parts.append(f"{format_mod(modifier)} (мод)")
+        formula_parts.append(f"{format_mod(modifier)} ({attr_name})")
         if custom_mod: formula_parts.append(f"{format_mod(custom_mod)} (врем)")
         formula_exp = " + ".join(formula_parts).replace(" + -", " - ").replace(" + +", " + ")
 
@@ -698,8 +942,9 @@ async def evaluate_check_for_character(
         # Интеграция с GM-проверками
         detail_str = f"{d20_roll} {format_mod(modifier)} (мод)"
         if custom_mod: detail_str += f" {format_mod(custom_mod)} (врем)"
-        sent_msg = await message.reply(report, reply_markup=kb_markup)
-        await check_and_update_gm_request(message, character, attr_name, total, detail_str, sent_msg.message_id)
+        sent_msg = await send_roll_response(message, report, reply_markup=kb_markup)
+        if sent_msg:
+            await check_and_update_gm_request(message, character, attr_name, total, detail_str, sent_msg.message_id)
         return
 
     # 11. Если сообщение не подошло ни под один паттерн
@@ -765,6 +1010,19 @@ async def handle_direct_text_input(message: Message, state: FSMContext):
         character = DUMMY_CHARACTER
     identity = f"{user_name} ({character['name']})" if (character and character != DUMMY_CHARACTER) else user_name
         
+    # Проверяем специальные текстовые команды просмотра листа персонажа
+    if clean_text in ["лист", "персонаж", "карточка", "лист персонажа"]:
+        if character == DUMMY_CHARACTER:
+            await message.reply(
+                "⚠️ У вас нет активного персонажа.\n"
+                "Создайте его с помощью /create_character или выберите в /characters."
+            )
+            return
+        from handlers.setup import format_character_card
+        card_text = format_character_card(character)
+        await message.reply(card_text)
+        return
+
     # Получаем сессионный режим броска
     fsm_data = await state.get_data()
     session_mode = fsm_data.get("roll_mode", "normal")
@@ -834,13 +1092,15 @@ async def handle_direct_text_input(message: Message, state: FSMContext):
                 total=chosen,
                 raw_d20=chosen
             )
-            await message.reply(report, reply_markup=kb_markup)
+            await send_roll_response(message, report, reply_markup=kb_markup)
             return
             
         try:
             if is_formula:
                 match = FORMULA_PATTERN.match(temp_clean)
                 num_dice_str, sides_str, sign, mod_str = match.groups()
+                num_dice = int(num_dice_str) if num_dice_str else 1
+                sides_val = 0
                 try:
                     sides_val = int(sides_str)
                     await _send_dice_sticker(message, sides_val)
@@ -859,7 +1119,7 @@ async def handle_direct_text_input(message: Message, state: FSMContext):
                     total=total,
                     raw_d20=raw_d20
                 )
-                await message.reply(report, reply_markup=kb_markup)
+                await send_roll_response(message, report, reply_markup=kb_markup)
             else:
                 result_data = DiceRollerService.parse_and_roll(raw_text)
                 await _send_roll_result(message, result_data, character)
@@ -880,14 +1140,6 @@ async def handle_direct_text_input(message: Message, state: FSMContext):
                 name=f"Тема №{thread_id}"
             )
             
-    # Получаем привязанного к этому чату и теме персонажа
-    character = await DatabaseService.get_bound_character(user_id, chat_id, thread_id)
-    
-    if not character:
-        # Персонажа нет (не привязан к текущему чату/топику или вообще не создан)
-        # Совершаем обычный бросок без персонажа!
-        character = DUMMY_CHARACTER
-        
     # Выполняем бросок!
     await evaluate_check_for_character(character, raw_text, session_mode, state, message)
 
@@ -1000,7 +1252,7 @@ async def _send_roll_result(message: Message, result_data: dict, character: Opti
             total=result_data['result'],
             raw_d20=result_data['result'] if sides == 20 else None
         )
-        await message.reply(text, reply_markup=markup)
+        await send_roll_response(message, text, reply_markup=markup)
     else:
         await message.reply(
             f"⚠️ {result_data['error']}",
@@ -1033,12 +1285,6 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
     clean_text = clean_text.replace("пассивный", "").replace("пассивная", "").replace("пассивное", "").replace("пассивн", "").strip()
     
     override_attr = None
-    for attr_key in ATTR_MAPPING.keys():
-        if attr_key in clean_text and clean_text != attr_key:
-            override_attr = attr_key
-            clean_text = clean_text.replace(attr_key, "").strip()
-            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-            break
             
     # Совершаем d20 броски
     if is_passive:
@@ -1068,14 +1314,7 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
     
     # A. Спасбросок
     if "спас" in clean_text:
-        attr_key = None
-        if override_attr:
-            attr_key = override_attr
-        else:
-            for key in ATTR_MAPPING.keys():
-                if key in clean_text:
-                    attr_key = key
-                    break
+        attr_key = find_attribute_key(clean_text)
         if attr_key in ATTR_MAPPING:
             attr_info = ATTR_MAPPING[attr_key]
             attr_name = attr_info["name"]
@@ -1087,7 +1326,7 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
             
             total = chosen_roll + modifier + pb + custom_mod
             
-            detail_str = f"{roll_desc} {format_mod(modifier)} (мод)"
+            detail_str = f"{roll_desc} {format_mod(modifier)} ({attr_name})"
             if pb: detail_str += f" + {pb} (мастерство)"
             if custom_mod: detail_str += f" {format_mod(custom_mod)} (врем)"
             
@@ -1109,6 +1348,9 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
         skill_info = SKILL_MAPPING[matched_skill_key]
         skill_name = skill_info["name"]
         
+        remaining_text = clean_text.replace(matched_skill_key, "").strip()
+        override_attr = find_attribute_key(remaining_text)
+        
         if override_attr:
             attr_key = override_attr
         else:
@@ -1118,14 +1360,47 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
         db_field = attr_info["db_field"]
         
         modifier = character[db_field]
-        is_proficient = skill_name in character["skills"]
-        pb = character["proficiency_bonus"] if is_proficient else 0
         
-        total = chosen_roll + modifier + pb + custom_mod
+        # Определяем уровень владения навыком
+        prof_level = "none"
+        full_data = character.get("full_data", {})
+        if isinstance(full_data, dict) and "skills" in full_data:
+            fd_skills = full_data["skills"]
+            if isinstance(fd_skills, dict):
+                prof_level = fd_skills.get(skill_name, "none")
+            elif isinstance(fd_skills, list):
+                if skill_name in fd_skills:
+                    prof_level = "proficient"
+        else:
+            if skill_name in character.get("skills", []):
+                prof_level = "proficient"
+                
+        pb = character.get("proficiency_bonus", 0)
         
-        detail_str = f"{roll_desc} {format_mod(modifier)} ({attr_info['name']})"
-        if pb: detail_str += f" + {pb} (мастерство)"
-        if custom_mod: detail_str += f" {format_mod(custom_mod)} (врем)"
+        added_pb = 0
+        added_exp = 0
+        added_half = 0
+        
+        if prof_level == "proficient":
+            added_pb = pb
+        elif prof_level == "expert":
+            added_pb = pb
+            added_exp = pb
+        elif prof_level == "half":
+            added_half = pb // 2
+            
+        total = chosen_roll + modifier + added_pb + added_exp + added_half + custom_mod
+        
+        detail_parts = [roll_desc, f"{format_mod(modifier)} ({attr_info['name']})"]
+        if added_pb:
+            detail_parts.append(f"+{added_pb} (владение)")
+        if added_exp:
+            detail_parts.append(f"+{added_exp} (экспертность)")
+        if added_half:
+            detail_parts.append(f"+{added_half} (полу-владение)")
+        if custom_mod:
+            detail_parts.append(f"{format_mod(custom_mod)} (врем)")
+        detail_str = " + ".join(detail_parts).replace(" + -", " - ").replace(" + +", " + ")
         
         return {
             "total": total,
@@ -1143,13 +1418,54 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
             
     if matched_tool_key:
         tool_name = TOOL_MATCH_MAP[matched_tool_key]
+        # Определяем уровень владения инструментом
+        prof_level = "none"
         is_proficient = any(t.lower() == tool_name.lower() for t in character["tools"])
-        pb = character["proficiency_bonus"] if is_proficient else 0
+        full_data = character.get("full_data", {})
+        if isinstance(full_data, dict) and "tools" in full_data:
+            fd_tools = full_data["tools"]
+            if isinstance(fd_tools, dict):
+                prof_level = fd_tools.get(tool_name, "none")
+                if prof_level == "none":
+                    for k, v in fd_tools.items():
+                        if k.lower() == tool_name.lower():
+                            prof_level = v
+                            break
+            elif isinstance(fd_tools, list):
+                if any(t.lower() == tool_name.lower() for t in fd_tools):
+                    prof_level = "proficient"
+        else:
+            if is_proficient:
+                prof_level = "proficient"
+                
+        pb = character["proficiency_bonus"]
+        added_pb = 0
+        added_exp = 0
         
-        total = chosen_roll + pb + custom_mod
+        if prof_level == "proficient":
+            added_pb = pb
+        elif prof_level == "expert":
+            added_pb = pb
+            added_exp = pb
+            
+        total_pb = added_pb + added_exp
+        
+        remaining_text = clean_text.replace(matched_tool_key, "").strip()
+        override_attr = find_attribute_key(remaining_text)
+        
+        modifier = 0
+        attr_info_name = ""
+        if override_attr:
+            attr_info = ATTR_MAPPING[override_attr]
+            modifier = character[attr_info["db_field"]]
+            attr_info_name = f" ({attr_info['name']})"
+            
+        total = chosen_roll + modifier + total_pb + custom_mod
         
         detail_str = f"{roll_desc}"
-        if pb: detail_str += f" + {pb} (мастерство)"
+        if modifier: detail_str += f" {format_mod(modifier)} (мод)"
+        if added_pb: detail_str += f" + {added_pb} (мастерство)"
+        if added_exp: detail_str += f" + {added_exp} (компетентность)"
         if custom_mod: detail_str += f" {format_mod(custom_mod)} (врем)"
         
         return {
@@ -1160,11 +1476,7 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
         }
         
     # D. Прямая характеристика
-    attr_key = None
-    for key in ATTR_MAPPING.keys():
-        if key in clean_text:
-            attr_key = key
-            break
+    attr_key = find_attribute_key(clean_text)
             
     if attr_key:
         attr_info = ATTR_MAPPING[attr_key]
@@ -1173,7 +1485,7 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
         
         total = chosen_roll + modifier + custom_mod
         
-        detail_str = f"{roll_desc} {format_mod(modifier)} (мод)"
+        detail_str = f"{roll_desc} {format_mod(modifier)} ({attr_info['name']})"
         if custom_mod: detail_str += f" {format_mod(custom_mod)} (врем)"
         
         return {
@@ -1223,10 +1535,10 @@ async def check_and_update_gm_request(message: Message, character: dict, check_n
     if req_check_type == check_name_key:
         match = True
     elif "спас" in req_check_type and "спас" in check_name_key:
-        for key in ATTR_MAPPING.keys():
-            if key in req_check_type and key in check_name_key:
-                match = True
-                break
+        req_attr = find_attribute_key(req_check_type)
+        check_attr = find_attribute_key(check_name_key)
+        if req_attr and check_attr and req_attr == check_attr:
+            match = True
                 
     if not match:
         return
@@ -1425,8 +1737,10 @@ async def handle_run_request_check_callback(callback: CallbackQuery, state: FSMC
         is_passive=is_passive
     )
     
-    markup = await _get_kb(callback, "normal")
-    bot_msg = await callback.message.answer(report, reply_markup=markup)
+    target_markup = markup
+    if callback.message.chat.type != "private":
+        target_markup = None
+    bot_msg = await callback.message.answer(report, reply_markup=target_markup)
     await callback.answer("Бросок выполнен!")
     
     await DatabaseService.add_passed_character(

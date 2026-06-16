@@ -13,7 +13,8 @@ else:
     load_dotenv()
 
 # Настройки бота
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_MODE = os.getenv("BOT_MODE", "prod").lower()
+BOT_TOKEN = os.getenv("BOT_TOKEN_TEST" if BOT_MODE == "test" else "BOT_TOKEN")
 THROTTLING_RATE = float(os.getenv("THROTTLING_RATE", "1.0"))
 DB_SALT = os.getenv("DB_SALT", "default_dice_roller_salt_value")
 
@@ -41,3 +42,8 @@ DICE_RESULT_STICKERS = {
     6: {i: os.getenv(f"STICKER_D6_{i}", "") for i in range(1, 7)},
     20: {i: os.getenv(f"STICKER_D20_{i}", "") for i in range(1, 21)}
 }
+
+# Настройки Telegram Mini App (Web App)
+WEBAPP_HOST = os.getenv("WEBAPP_HOST", "0.0.0.0")
+WEBAPP_PORT = int(os.getenv("WEBAPP_PORT", "8000"))
+WEBAPP_URL = os.getenv("WEBAPP_URL", f"http://localhost:{WEBAPP_PORT}")

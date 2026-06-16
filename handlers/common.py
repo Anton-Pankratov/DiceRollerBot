@@ -15,6 +15,13 @@ async def cmd_start(message: Message):
     Если персонажа нет, предлагает создать. Если есть — приветствует.
     """
     user_id = message.from_user.id
+    
+    # Check for deep link starting keyboard config
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1 and args[1] == "keyboard":
+        await cmd_keyboard(message)
+        return
+
     character = await DatabaseService.get_character(user_id)
     user_name = html.quote(message.from_user.full_name)
     
@@ -158,6 +165,26 @@ async def cmd_keyboard(message: Message):
     постоянная (закрепленная), сворачиваемая или полностью скрытая.
     """
     user_id = message.from_user.id
+    
+    if message.chat.type != "private":
+        # Если команда вызвана в группе/теме, перенаправляем в ЛС с ботом
+        bot_user = await message.bot.get_me()
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(
+                text="⚙️ Настроить в ЛС",
+                url=f"https://t.me/{bot_user.username}?start=keyboard"
+            )
+        )
+        await message.reply(
+            "⚙️ <b>Индивидуальная настройка Reply-клавиатуры:</b>\n\n"
+            "Настройка клавиатуры выполняется персонально в личной переписке с ботом, "
+            "чтобы не мешать другим участникам чата.\n\n"
+            "Нажмите кнопку ниже, перейдите в ЛС и нажмите «Запустить» для настройки:",
+            reply_markup=builder.as_markup()
+        )
+        return
+
     mode_val = await DatabaseService.get_keyboard_mode(user_id)
     
     if mode_val == 1:
@@ -226,11 +253,17 @@ async def handle_set_kbd_mode(callback: CallbackQuery):
     else:
         text = f"🔄 Настройки успешно применены! Игровая клавиатура обновлена под ваш выбор."
         
+    # В группах присылаем клавиатуру только если отвечаем на сообщение пользователя (selective=True сработает корректно)
+    # Иначе не присылаем её в общий чат, чтобы не перезаписать клавиатуру другим пользователям.
+    target_markup = markup
+    if callback.message.chat.type != "private" and not callback.message.reply_to_message:
+        target_markup = None
+
     if callback.message.reply_to_message:
-        await callback.message.reply_to_message.reply(text, reply_markup=markup)
+        await callback.message.reply_to_message.reply(text, reply_markup=target_markup)
     else:
         mention = callback.from_user.mention_html()
-        await callback.message.answer(f"{mention}, {text}", reply_markup=markup)
+        await callback.message.answer(f"{mention}, {text}", reply_markup=target_markup)
 
 
 @router.callback_query(F.data.startswith("set_kbd_persistent:"))
@@ -241,3 +274,36 @@ async def handle_set_kbd_persistent(callback: CallbackQuery):
     # Перенаправляем на новый универсальный обработчик
     callback.data = f"set_kbd_mode:{mode}"
     await handle_set_kbd_mode(callback)
+
+
+@router.message(Command("webapp"))
+async def cmd_webapp(message: Message):
+    """
+    Обработчик команды /webapp.
+    Отправляет инлайн-кнопку для запуска WebApp.
+    """
+    import config
+    from aiogram.types import WebAppInfo
+    
+    if config.WEBAPP_URL.startswith("https://"):
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(
+                text="🎲 Открыть лист персонажа",
+                web_app=WebAppInfo(url=config.WEBAPP_URL)
+            )
+        )
+        await message.reply(
+            "🧙‍♂️ <b>Интерактивный лист персонажа (Mini App)</b>\n\n"
+            "Нажмите кнопку ниже, чтобы открыть графический интерфейс управления вашими героями, "
+            "где вы можете легко создавать листы персонажей, редактировать характеристики и настраивать кастомные формулы!",
+            reply_markup=builder.as_markup()
+        )
+    else:
+        await message.reply(
+            "🧙‍♂️ <b>Интерактивный лист персонажа (Mini App)</b>\n\n"
+            "⚠️ <b>Внимание:</b> Для запуска Mini App внутри Telegram требуется безопасное подключение (<b>HTTPS</b>).\n\n"
+            f"1️⃣ Вы можете открыть и протестировать интерфейс в вашем обычном браузере на компьютере: {config.WEBAPP_URL}\n"
+            "2️⃣ Чтобы запустить приложение внутри Telegram, пробросьте локальный порт наружу (например: <code>ngrok http 8000</code>), "
+            "скопируйте ссылку <code>https://...</code> и вставьте её в переменную <code>WEBAPP_URL</code> в файле <code>.env</code>, после чего перезапустите бота."
+        )

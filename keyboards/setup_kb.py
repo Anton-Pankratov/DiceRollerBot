@@ -111,8 +111,47 @@ def get_tools_keyboard(selected: List[str]) -> InlineKeyboardMarkup:
     # Кнопка завершения
     builder.row(
         InlineKeyboardButton(
-            text="Завершить создание персонажа 🎓",
+            text="Сохранить и продолжить ➡️",
             callback_data="done_tools"
+        )
+    )
+    return builder.as_markup()
+
+def get_expertise_keyboard(skills: List[str], tools: List[str], selected_exp: List[str]) -> InlineKeyboardMarkup:
+    """Генерирует клавиатуру для выбора компетентности (Expertise) из владений."""
+    builder = InlineKeyboardBuilder()
+    
+    # Добавляем навыки
+    for skill in skills:
+        if skill in ALL_SKILLS:
+            idx = ALL_SKILLS.index(skill)
+            status = "✅" if skill in selected_exp else "❌"
+            builder.add(
+                InlineKeyboardButton(
+                    text=f"{status} 📜 {skill}",
+                    callback_data=f"toggle_exp:s:{idx}"
+                )
+            )
+            
+    # Добавляем инструменты
+    for tool in tools:
+        if tool in ALL_TOOLS:
+            idx = ALL_TOOLS.index(tool)
+            status = "✅" if tool in selected_exp else "❌"
+            btn_text = tool.replace("Музыкальный инструмент: ", "🎵 ").replace("Игровой набор: ", "🎲 ")
+            builder.add(
+                InlineKeyboardButton(
+                    text=f"{status} 🛠️ {btn_text}",
+                    callback_data=f"toggle_exp:t:{idx}"
+                )
+            )
+            
+    builder.adjust(2)
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="Завершить создание персонажа 🎓",
+            callback_data="done_expertise"
         )
     )
     return builder.as_markup()
@@ -165,7 +204,8 @@ def get_edit_menu_keyboard() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(text="📜 Навыки", callback_data="edit_field:skills"),
-        InlineKeyboardButton(text="🛠️ Инструменты", callback_data="edit_field:tools")
+        InlineKeyboardButton(text="🛠️ Инструменты", callback_data="edit_field:tools"),
+        InlineKeyboardButton(text="🎓 Компетентность", callback_data="edit_field:expertise")
     )
     builder.row(
         InlineKeyboardButton(text="⬅️ Назад к обзору", callback_data="edit_back_to_review")
@@ -207,7 +247,10 @@ def get_characters_management_keyboard(characters: List[dict], bound_char_name =
         InlineKeyboardButton(text="➕ Создать нового", callback_data="create_new_char")
     )
     builder.row(
-        InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_active_char"),
+        InlineKeyboardButton(text="📋 Карточка", callback_data="show_active_char_card"),
+        InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_active_char")
+    )
+    builder.row(
         InlineKeyboardButton(text="🧪 Формулы", callback_data="active_char_formulas"),
         InlineKeyboardButton(text="❌ Удалить", callback_data="delete_char_menu")
     )
@@ -215,6 +258,15 @@ def get_characters_management_keyboard(characters: List[dict], bound_char_name =
         InlineKeyboardButton(text="🔗 Управление привязками", callback_data="manage_bindings_menu")
     )
     return builder.as_markup()
+
+def get_character_card_keyboard() -> InlineKeyboardMarkup:
+    """Генерирует клавиатуру для просмотра карточки персонажа."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="back_to_chars_list")
+    )
+    return builder.as_markup()
+
 
 def get_characters_delete_keyboard(characters: List[dict]) -> InlineKeyboardMarkup:
     """Генерирует клавиатуру для удаления персонажей."""

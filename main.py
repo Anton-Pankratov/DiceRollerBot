@@ -62,6 +62,7 @@ async def main():
             BotCommand(command="keyboard", description="Настроить закрепление или скрытие игровой клавиатуры"),
             BotCommand(command="characters", description="Управление списком ваших персонажей"),
             BotCommand(command="create_character", description="Создать нового персонажа (мастер создания)"),
+            BotCommand(command="webapp", description="Открыть интерактивный Mini App для листов персонажей"),
             BotCommand(command="roll", description="Сделать быстрый бросок кубиков (например: /roll 2d6)"),
             BotCommand(command="gm_check", description="Призвать игроков пройти проверку (заявка от Мастера)"),
             BotCommand(command="meme", description="Найти DnD мем по ключевым словам или получить случайный"),
@@ -69,12 +70,37 @@ async def main():
         ]
         await bot.set_my_commands(commands=bot_commands)
         logger.info("Меню команд бота успешно зарегистрировано в Telegram.")
+
+        # Настройка Menu Button для WebApp
+        if config.WEBAPP_URL.startswith("https://"):
+            from aiogram.types import MenuButtonWebApp, WebAppInfo
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="🎲 Лист героя",
+                    web_app=WebAppInfo(url=config.WEBAPP_URL)
+                )
+            )
+            logger.info("Menu Button для WebApp успешно настроен.")
+        else:
+            logger.warning(
+                "Кнопка меню WebApp не была настроена, так как Telegram требует HTTPS ссылку. "
+                "Пропишите HTTPS-адрес (например, от ngrok) в WEBAPP_URL в файле .env."
+            )
     except Exception as e:
         logger.warning(f"Не удалось установить описание или команды бота в Telegram: {e}")
     
     # Инициализация диспетчера с хранилищем состояний в памяти (MemoryStorage).
     # При сверхвысоких нагрузках на несколько серверов MemoryStorage заменяется на RedisStorage.
     dp = Dispatcher(storage=MemoryStorage())
+
+    @dp.update.outer_middleware()
+    async def log_updates(handler, event, data):
+        logger.info(f"!!! RECEIVED UPDATE: {event}")
+        try:
+            return await handler(event, data)
+        except Exception as e:
+            logger.exception(f"!!! ERROR DURING UPDATE HANDLING: {e}")
+            raise
 
     # Подключение Throttling (Rate Limiting) Middleware для защиты от спама
     throttling_middleware = ThrottlingMiddleware()
@@ -89,7 +115,11 @@ async def main():
     await DatabaseService.init_db()
     logger.info("База данных SQLite успешно инициализирована.")
 
-    logger.info("Запуск бота в режиме Long Polling...")
+    # Запуск WebApp сервера
+    from services.webapp_server import start_webapp_server
+    webapp_runner = await start_webapp_server(bot)
+
+    logger.info(f"Запуск бота в режиме Long Polling (Окружение: {config.BOT_MODE.upper()})...")
     
     try:
         # Пропускаем накопившиеся обновления перед стартом, чтобы бот не отвечал на старые сообщения
@@ -98,6 +128,10 @@ async def main():
     except Exception as e:
         logger.exception(f"Произошла ошибка во время работы бота: {e}")
     finally:
+        # Корректное закрытие сессии WebApp
+        if 'webapp_runner' in locals() and webapp_runner:
+            await webapp_runner.cleanup()
+            logger.info("Сервер WebApp успешно остановлен.")
         # Корректное закрытие сессии бота
         await bot.session.close()
         logger.info("Бот успешно остановлен.")
