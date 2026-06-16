@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DiceRoller - Лист персонажа D&D 5e</title>
+    <!-- Подключаем Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Cinzel:wght@600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- 1. ГЛАВНЫЙ ЭКРАН: Список персонажей -->
+        <section id="list-view" class="view active">
+            <header class="app-header">
+                <div class="logo-area">
+                    <span class="logo-icon">🎲</span>
+                    <div class="logo-text">
+                        <h1>DiceRoller</h1>
+                        <p>D&D 5e Character Companion</p>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button id="btn-theme-toggle" class="btn btn-icon-only" title="Сменить тему">🌓</button>
+                    <button id="btn-import-trigger" class="btn btn-icon-only" title="Импорт JSON">📥</button>
+                    <input type="file" id="import-file-input" accept=".json" style="display: none;">
+                </div>
+            </header>
+
+            <main class="content-container">
+                <div class="characters-list-section">
+                    <div class="section-title-bar">
+                        <h2>Ваши персонажи</h2>
+                        <span class="subtitle" id="characters-count">0 героев</span>
+                    </div>
+                    <div id="characters-list" class="characters-grid">
+                        <div class="loading-placeholder">
+                            <div class="spinner"></div>
+                            <p>Загрузка списка героев...</p>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <div class="fab-container">
+                <button id="btn-create-char" class="btn btn-primary btn-fab">
+                    <span class="btn-icon">🧙‍♂️</span> Создать персонажа
+                </button>
+            </div>
+        </section>
+
+        <!-- 2. ЭКРАН МАСТЕРА СОЗДАНИЯ (Wizard Creator) -->
+        <section id="wizard-view" class="view">
+            <header class="wizard-header">
+                <button id="btn-wizard-back" class="btn btn-icon-only" title="Назад к списку">⬅️</button>
+                <h2 id="wizard-title">Создание героя</h2>
+                <div class="wizard-progress-bar">
+                    <div id="wizard-progress-fill" style="width: 11%;"></div>
+                </div>
+            </header>
+
+            <nav class="wizard-steps-indicator">
+                <span class="step-dot active" data-step="1">1</span>
+                <span class="step-dot" data-step="2">2</span>
+                <span class="step-dot" data-step="3">3</span>
+                <span class="step-dot" data-step="4">4</span>
+                <span class="step-dot" data-step="5">5</span>
+                <span class="step-dot" data-step="6">6</span>
+                <span class="step-dot" data-step="7">7</span>
+                <span class="step-dot" data-step="8">8</span>
+                <span class="step-dot" data-step="9">9</span>
+            </nav>
+
+            <main class="wizard-content">
+                <!-- Шаг 1: Общая информация -->
+                <div class="wizard-step-panel active" data-step="1">
+                    <h3>Шаг 1: Общие сведения</h3>
+                    <div class="form-group">
+                        <label for="wiz-name">Имя персонажа</label>
+                        <input type="text" id="wiz-name" placeholder="Введите имя героя..." autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="wiz-player-name">Имя игрока</label>
+                            <input type="text" id="wiz-player-name" placeholder="Введите ваше имя..." autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label for="wiz-xp">Опыт (XP)</label>
+                            <input type="number" id="wiz-xp" value="0" min="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="wiz-portrait">Ссылка на портрет / Эмодзи</label>
+                        <input type="text" id="wiz-portrait" placeholder="Например, 🧙‍♂️ или ссылка на картинку..." autocomplete="off">
+                        <div class="portrait-presets">
+                            <button class="preset-emoji">🛡️</button>
+                            <button class="preset-emoji">🏹</button>
+                            <button class="preset-emoji">🪄</button>
+                            <button class="preset-emoji">🗡️</button>
+                            <button class="preset-emoji">🐉</button>
+                            <button class="preset-emoji">🪓</button>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="wiz-alignment">Мировоззрение</label>
+                            <select id="wiz-alignment">
+                                <option value="Lawful Good">Законопослушный добрый (LG)</option>
+                                <option value="Neutral Good">Нейтральный добрый (NG)</option>
+                                <option value="Chaotic Good">Хаотичный добрый (CG)</option>
+                                <option value="Lawful Neutral">Законопослушный нейтральный (LN)</option>
+                                <option value="True Neutral" selected>Нейтральный (TN)</option>
+                                <option value="Chaotic Neutral">Хаотичный нейтральный (CN)</option>
+                                <option value="Lawful Evil">Законопослушный злой (LE)</option>
+                                <option value="Neutral Evil">Нейтральный злой (NE)</option>
+                                <option value="Chaotic Evil">Хаотичный злой (CE)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="wiz-background">Предыстория (Background)</label>
+                            <input type="text" id="wiz-background" value="Custom" placeholder="Например: Аколиты, Благородный...">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Шаг 2: Внешность и описание -->
+                <div class="wizard-step-panel" data-step="2">
+                    <h3>Шаг 2: Внешность и описание</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="wiz-age">Возраст</label>
+                            <input type="text" id="wiz-age" placeholder="Например: 25 лет">
+                        </div>
+                        <div class="form-group">
+                            <label for="wiz-height">Рост</label>
+                            <input type="text" id="wiz-height" placeholder="Например: 180 см">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="wiz-weight">Вес</label>
+                            <input type="text" id="wiz-weight" placeholder="Например: 75 кг">
+                        </div>
+                        <div class="form-group">
+                            <label for="wiz-eyes">Глаза</label>
+                            <input type="text" id="wiz-eyes" placeholder="Например: Голубые">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="wiz-skin">Кожа</label>
+                            <input type="text" id="wiz-skin" placeholder="Например: Светлая">
+                        </div>
+                        <div class="form-group">
+                            <label for="wiz-hair">Волосы</label>
+                            <input type="text" id="wiz-hair" placeholder="Например: Русые">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="wiz-backstory">История персонажа (Backstory)</label>
+                        <textarea id="wiz-backstory" rows="4" placeholder="Напишите краткую биографию вашего героя..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Шаг 3: Раса и Языки -->
+                <div class="wizard-step-panel" data-step="3">
+                    <h3>Шаг 3: Выберите расу</h3>
+                    <div class="grid-selector-container" id="race-grid-container">
+                        <!-- Динамически загружается из DND_RACES -->
+                    </div>
+                    <div class="subrace-selector-container form-group" id="subrace-container" style="display: none;">
+                        <label for="wiz-subrace">Субраса</label>
+                        <select id="wiz-subrace">
+                            <!-- Динамически -->
+                        </select>
+                    </div>
+                    <div id="race-description-panel" class="info-block" style="display: none;"></div>
+                    
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label for="wiz-languages">Владение языками</label>
+                        <input type="text" id="wiz-languages" placeholder="Например: Общий, Эльфийский, Дварфийский">
+                        <span class="input-helper">Укажите языки, которыми владеет персонаж.</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="wiz-other-proficiencies">Прочие владения (доспехи, оружие и т.д.)</label>
+                        <textarea id="wiz-other-proficiencies" rows="2" placeholder="Например: Легкие доспехи, простые кинжалы, пистоли"></textarea>
+                        <span class="input-helper">Перечислите прочие владения, не входящие в стандартные инструменты.</span>
+                    </div>
+                </div>
+
+                <!-- Шаг 4: Класс, HP и Боевые параметры -->
+                <div class="wizard-step-panel" data-step="4">
+                    <h3>Шаг 4: Классы и Бой</h3>
+                    <div id="classes-list-wrapper">
+                        <!-- Динамический список классов для мультиклассирования -->
+                    </div>
+                    <button type="button" id="btn-wizard-add-class" class="btn btn-secondary btn-block">
+                        ➕ Добавить класс (Мультиклассирование)
+                    </button>
+                    
+                    <div class="form-row" style="margin-top: 20px;">
+                        <div class="form-group">
+                            <label for="wiz-max-hp">Макс. Хиты (HP)</label>
+                            <div class="number-input">
+                                <button type="button" class="num-btn minus" data-target="wiz-max-hp">—</button>
+                                <input type="number" id="wiz-max-hp" value="10" min="1">
+                                <button type="button" class="num-btn plus" data-target="wiz-max-hp">+</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="wiz-speed-override">Скорость (фт.)</label>
+                            <input type="number" id="wiz-speed-override" placeholder="Автоматически (30, 25 и т.д.)" min="0">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="wiz-ac-override">AC (Override)</label>
+                            <input type="number" id="wiz-ac-override" placeholder="Автоматически" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="wiz-init-override">Бонус Инициативы Override</label>
+                            <input type="number" id="wiz-init-override" placeholder="Автоматически" step="1">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="wiz-dc-override">Сл. Спасброска магии Override</label>
+                            <input type="number" id="wiz-dc-override" placeholder="Автоматически" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="wiz-spell-attack-override">Бонус атаки магии Override</label>
+                            <input type="number" id="wiz-spell-attack-override" placeholder="Автоматически" step="1">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Шаг 5: Генерация Характеристик -->
+                <div class="wizard-step-panel" data-step="5">
+                    <h3>Шаг 5: Способ генерации характеристик</h3>
+                    <div class="form-group">
+                        <select id="stat-gen-method-select">
+                            <option value="standard_array" selected>Стандартный набор (15, 14, 13, 12, 10, 8)</option>
+                            <option value="point_buy">Покупка очков (Point Buy)</option>
+                            <option value="dice_roll">Бросок кубиков (4d6 drop lowest)</option>
+                            <option value="manual">Ввод вручную</option>
+                        </select>
+                    </div>
+
+                    <!-- Контент для разных способов -->
+                    <div id="stat-gen-content" class="stat-gen-box">
+                        <!-- Заполняется динамически через JS -->
+                    </div>
+
+                    <!-- Вывод характеристик с расовыми бонусами -->
+                    <div class="stats-wizard-summary">
+                        <h4>Итоговые характеристики:</h4>
+                        <div class="stats-wizard-grid" id="stats-wizard-summary-grid">
+                            <!-- STR, DEX, CON, INT, WIS, CHA -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Шаг 6: Проверки и Навыки -->
+                <div class="wizard-step-panel" data-step="6">
+                    <h3>Шаг 6: Владения (Saves, Skills, Tools)</h3>
+                    
+                    <div class="prof-section">
+                        <h4>🛡️ Спасброски</h4>
+                        <div class="checkbox-grid" id="wiz-saves-grid">
+                            <!-- Спасброски Сила, Ловкость... -->
+                        </div>
+                    </div>
+
+                    <div class="prof-section">
+                        <h4>📜 Навыки и Уровень Владения</h4>
+                        <span class="section-helper">Укажите тип владения: [В] - Владение, [Э] - Экспертиза, [П] - Полу-владение.</span>
+                        <div class="skills-wizard-list" id="wiz-skills-list">
+                            <!-- 18 навыков с опциями -->
+                        </div>
+                    </div>
+
+                    <div class="prof-section">
+                        <h4>🛠️ Инструменты</h4>
+                        <div class="checkbox-grid" id="wiz-tools-grid">
+                            <!-- Инструменты -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Шаг 7: Черты, Идеалы, Особенности -->
+                <div class="wizard-step-panel" data-step="7">
+                    <h3>Шаг 7: Черты личности и Особенности</h3>
+                    <div class="form-group">
+                        <label for="wiz-personality">Черты характера (Personality Traits)</label>
+                        <textarea id="wiz-personality" rows="2" placeholder="Опишите характер персонажа..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="wiz-ideals">Идеалы (Ideals)</label>
+                        <textarea id="wiz-ideals" rows="2" placeholder="Во что верит персонаж..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="wiz-bonds">Привязанности (Bonds)</label>
+                        <textarea id="wiz-bonds" rows="2" placeholder="Что связывает героя с миром..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="wiz-flaws">Слабости (Flaws)</label>
+                        <textarea id="wiz-flaws" rows="2" placeholder="Недостатки или пороки персонажа..."></textarea>
+                    </div>
+                    
+                    <div class="custom-features-section" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                        <h4>Пользовательские умения и черты (Feats / Traits):</h4>
+                        <div class="item-adder-box">
+                            <input type="text" id="wiz-feat-name" placeholder="Название умения (например: Внимательный)...">
+                            <textarea id="wiz-feat-desc" rows="2" placeholder="Описание умения..."></textarea>
+                            <button type="button" id="btn-wiz-add-feat" class="btn btn-secondary btn-block">Добавить умение</button>
+                        </div>
+                        <ul class="wizard-items-list" id="wiz-feats-list" style="margin-top: 10px;">
+                            <!-- Список кастомных умений -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Шаг 8: Снаряжение и Кошелек -->
+                <div class="wizard-step-panel" data-step="8">
+                    <h3>Шаг 8: Снаряжение и Деньги</h3>
+                    <div class="starting-eq-section">
+                        <h4>Стартовые наборы:</h4>
+                        <div class="eq-choices" id="wiz-eq-presets">
+                            <!-- Базовые пакеты от выбранных классов -->
+                        </div>
+                    </div>
+                    
+                    <div class="coins-setup-section" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                        <h4>Кошелек (Монеты):</h4>
+                        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px;">
+                            <div class="form-group" style="align-items:center;">
+                                <label style="font-size: 8px; color: #b78a62;">CP (ММ)</label>
+                                <input type="number" id="wiz-coin-cp" value="0" min="0" style="text-align:center; padding: 6px;">
+                            </div>
+                            <div class="form-group" style="align-items:center;">
+                                <label style="font-size: 8px; color: #a1a1a1;">SP (СМ)</label>
+                                <input type="number" id="wiz-coin-sp" value="0" min="0" style="text-align:center; padding: 6px;">
+                            </div>
+                            <div class="form-group" style="align-items:center;">
+                                <label style="font-size: 8px; color: #526f63;">EP (ЭМ)</label>
+                                <input type="number" id="wiz-coin-ep" value="0" min="0" style="text-align:center; padding: 6px;">
+                            </div>
+                            <div class="form-group" style="align-items:center;">
+                                <label style="font-size: 8px; color: #d4af37;">GP (ЗМ)</label>
+                                <input type="number" id="wiz-coin-gp" value="0" min="0" style="text-align:center; padding: 6px;">
+                            </div>
+                            <div class="form-group" style="align-items:center;">
+                                <label style="font-size: 8px; color: #e5e4e2;">PP (ПМ)</label>
+                                <input type="number" id="wiz-coin-pp" value="0" min="0" style="text-align:center; padding: 6px;">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="inventory-editor-section" style="margin-top: 20px;">
+                        <h4>Дополнительные предметы:</h4>
+                        <div class="item-adder-box">
+                            <input type="text" id="wiz-item-name" placeholder="Название предмета...">
+                            <div class="adder-row">
+                                <input type="number" id="wiz-item-weight" placeholder="Вес (ф.)" step="0.1" min="0">
+                                <input type="number" id="wiz-item-qty" placeholder="Кол-во" min="1" value="1">
+                                <select id="wiz-item-type">
+                                    <option value="other">Прочее</option>
+                                    <option value="weapon">Оружие</option>
+                                    <option value="armor">Доспех</option>
+                                    <option value="shield">Щит</option>
+                                    <option value="tool">Инструмент</option>
+                                </select>
+                            </div>
+                            <button type="button" id="btn-wiz-add-item" class="btn btn-secondary btn-block">Добавить предмет</button>
+                        </div>
+                        <ul class="wizard-items-list" id="wiz-items-list">
+                            <!-- Список добавленных предметов -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Шаг 9: Заклинания -->
+                <div class="wizard-step-panel" data-step="9">
+                    <h3>Шаг 9: Книга заклинаний</h3>
+                    <p class="section-helper">Выберите заговоры и заклинания из базового списка для вашего героя:</p>
+                    <div id="spells-wizard-container" class="spells-wizard-grid">
+                        <!-- Сюда вставляются заклинания -->
+                    </div>
+                    
+                    <div class="custom-spells-section" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                        <h4>Добавить свои заклинания:</h4>
+                        <div class="item-adder-box" style="display:flex; flex-direction:column; gap:6px;">
+                            <input type="text" id="wiz-spell-name" placeholder="Название заклинания...">
+                            <div class="form-row">
+                                <select id="wiz-spell-lvl">
+                                    <option value="0">Заговор</option>
+                                    <option value="1">1-й уровень</option>
+                                    <option value="2">2-й уровень</option>
+                                    <option value="3">3-й уровень</option>
+                                    <option value="4">4-й уровень</option>
+                                    <option value="5">5-й уровень</option>
+                                    <option value="6">6-й уровень</option>
+                                    <option value="7">7-й уровень</option>
+                                    <option value="8">8-й уровень</option>
+                                    <option value="9">9-й уровень</option>
+                                </select>
+                                <input type="text" id="wiz-spell-school" placeholder="Школа (например: Воплощение)">
+                            </div>
+                            <div class="form-row">
+                                <input type="text" id="wiz-spell-time" placeholder="Время (например: 1 действие)">
+                                <input type="text" id="wiz-spell-range" placeholder="Дистанция (например: 60 футов)">
+                            </div>
+                            <textarea id="wiz-spell-desc" rows="2" placeholder="Описание эффекта заклинания..."></textarea>
+                            <button type="button" id="btn-wiz-add-spell" class="btn btn-secondary btn-block">Добавить заклинание</button>
+                        </div>
+                        <ul class="wizard-items-list" id="wiz-spells-list" style="margin-top: 10px;">
+                            <!-- Список добавленных кастомных заклинаний -->
+                        </ul>
+                    </div>
+                </div>
+            </main>
+
+            <footer class="wizard-footer">
+                <button id="btn-wizard-prev" class="btn btn-secondary" disabled>Назад</button>
+                <button id="btn-wizard-next" class="btn btn-primary">Далее</button>
+                <button id="btn-wizard-finish" class="btn btn-success" style="display: none;">Создать героя!</button>
+            </footer>
+        </section>
+
+        <!-- 3. ИНТЕРАКТИВНЫЙ ЛИСТ ПЕРСОНАЖА (Character Sheet Dashboard) -->
+        <section id="sheet-view" class="view">
+            <header class="sheet-header">
+                <div class="sheet-header-top">
+                    <button id="btn-sheet-back" class="btn btn-icon-only" title="Назад к списку">⬅️</button>
+                    <div class="sheet-hero-identity">
+                        <div id="sheet-portrait-placeholder" class="sheet-portrait-circle view-only">🧙‍♂️</div>
+                        <input type="text" id="sheet-portrait-input" class="edit-only header-portrait-input" placeholder="🧙‍♂️" style="width:40px; text-align:center; font-size:20px; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; display:none;">
+                        
+                        <div class="sheet-hero-titles">
+                            <h2 id="sheet-char-name" class="view-only">Гэндальф</h2>
+                            <input type="text" id="sheet-char-name-input" class="edit-only header-name-input" placeholder="Имя героя" style="font-size:16px; font-weight:700; padding:4px 8px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; width:100%; margin-bottom:4px; display:none;">
+                            
+                            <p id="sheet-char-meta" class="view-only">Полуэльф • Чародей 3 / Жрец 1</p>
+                            <p id="sheet-char-player" class="view-only" style="font-size:11px; color:var(--text-muted); font-weight:600;"></p>
+                            
+                            <div class="edit-only header-meta-inputs" style="display:none; flex-direction:column; gap:6px; margin-top:4px;">
+                                <div style="display:flex; gap:6px;">
+                                    <select id="sheet-char-race-select" style="flex:1; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:#151e36; color:#fff; font-size:11px;"></select>
+                                    <select id="sheet-char-subrace-select" style="flex:1; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:#151e36; color:#fff; font-size:11px; display:none;"></select>
+                                </div>
+                                <div style="display:flex; gap:6px;">
+                                    <input type="text" id="sheet-char-background-input" placeholder="Предыстория" style="flex:1; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:11px;">
+                                    <select id="sheet-char-alignment-select" style="flex:1; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:#151e36; color:#fff; font-size:11px;">
+                                        <option value="Lawful Good">Законопослушный добрый (LG)</option>
+                                        <option value="Neutral Good">Нейтральный добрый (NG)</option>
+                                        <option value="Chaotic Good">Хаотичный добрый (CG)</option>
+                                        <option value="Lawful Neutral">Законопослушный нейтральный (LN)</option>
+                                        <option value="True Neutral">Нейтральный (TN)</option>
+                                        <option value="Chaotic Neutral">Хаотичный нейтральный (CN)</option>
+                                        <option value="Lawful Evil">Законопослушный злой (LE)</option>
+                                        <option value="Neutral Evil">Нейтральный злой (NE)</option>
+                                        <option value="Chaotic Evil">Хаотичный злой (CE)</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; gap:6px; align-items:center;">
+                                    <span style="font-size:11px; color:var(--text-muted);">Игрок:</span>
+                                    <input type="text" id="sheet-player-name-input" placeholder="Имя игрока" style="flex:1; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:11px;">
+                                </div>
+                                <div style="display:flex; gap:6px; align-items:center;">
+                                    <span style="font-size:11px; color:var(--text-muted);">Опыт (XP):</span>
+                                    <input type="number" id="sheet-char-xp-input" value="0" min="0" style="width:80px; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:11px;">
+                                </div>
+                                <div class="classes-edit-section" style="border-top:1px solid var(--border-color); padding-top:6px; margin-top:4px;">
+                                    <span style="font-size:11px; font-weight:700; color:var(--text-muted);">Классы и уровни:</span>
+                                    <div id="sheet-classes-list-edit" style="display:flex; flex-direction:column; gap:4px; margin-top:4px;"></div>
+                                    <button type="button" id="btn-sheet-add-class" class="btn btn-secondary btn-sm" style="width:100%; margin-top:5px; padding:4px; font-size:11px;">➕ Добавить класс</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sheet-header-controls">
+                        <button id="btn-sheet-edit" class="btn btn-icon-only" title="Редактировать">✏️</button>
+                        <button id="btn-sheet-print" class="btn btn-icon-only" title="Печать PDF">🖨️</button>
+                        <button id="btn-sheet-export" class="btn btn-icon-only" title="Экспорт JSON">📤</button>
+                        <button id="btn-sheet-delete" class="btn btn-icon-only btn-danger" style="color:var(--danger);" title="Удалить персонажа">🗑️</button>
+                    </div>
+                </div>
+                
+                <!-- Боковые кнопки отдыха -->
+                <div class="sheet-rest-bar view-only">
+                    <button id="btn-short-rest" class="btn btn-secondary btn-sm">⛺ Короткий отдых</button>
+                    <button id="btn-long-rest" class="btn btn-secondary btn-sm">🛌 Длинный отдых</button>
+                </div>
+            </header>
+
+            <!-- Навигация по вкладкам Листа Персонажа -->
+            <nav class="tab-bar sheet-tab-bar">
+                <button class="tab-btn active" data-tab="sheet-tab-combat">Бой</button>
+                <button class="tab-btn" data-tab="sheet-tab-stats">Навыки</button>
+                <button class="tab-btn" data-tab="sheet-tab-items">Инвентарь</button>
+                <button class="tab-btn" data-tab="sheet-tab-spells">Магия</button>
+                <button class="tab-btn" data-tab="sheet-tab-features">Умения</button>
+                <button class="tab-btn" data-tab="sheet-tab-notes">Заметки</button>
+            </nav>
+
+            <main class="sheet-content">
+                <!-- Вкладка 1: БОЙ / ОБЩЕЕ -->
+                <div id="sheet-tab-combat" class="tab-panel active">
+                    <!-- Секция HP -->
+                    <div class="combat-card hp-card">
+                        <div class="hp-header">
+                            <span>Хиты (HP)</span>
+                            <span id="sheet-hp-fraction" class="view-only">12 / 12</span>
+                            <div class="edit-only hp-max-edit" style="display:none; align-items:center; gap:6px;">
+                                <input type="number" id="sheet-hp-max-input" placeholder="Макс. HP" style="width:70px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:12px;">
+                                <span style="font-size:12px;">Макс. HP</span>
+                            </div>
+                        </div>
+                        <div class="hp-progress-bar">
+                            <div id="sheet-hp-fill" class="hp-fill" style="width: 100%;"></div>
+                        </div>
+                        <div class="hp-controls view-only">
+                            <input type="number" id="hp-change-amount" placeholder="Кол-во..." min="1">
+                            <div class="hp-btn-group">
+                                <button id="btn-apply-damage" class="btn btn-danger btn-sm">Урон</button>
+                                <button id="btn-apply-heal" class="btn btn-success btn-sm">Лечение</button>
+                            </div>
+                        </div>
+                        <div class="temp-hp-row view-only">
+                            <label for="temp-hp-input">Временные HP:</label>
+                            <input type="number" id="temp-hp-input" value="0" min="0">
+                        </div>
+                    </div>
+
+                    <!-- Спасброски от смерти -->
+                    <div class="combat-card death-saves-card" style="background: var(--bg-card); padding: 12px; border-radius: var(--border-radius); border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+                        <div style="font-size: 11px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Спасброски от смерти</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size: 11px;">Успехи:</span>
+                                <div class="death-bubbles" id="death-success-bubbles" style="display:flex; gap:6px;">
+                                    <span class="death-bubble" data-type="success" data-idx="0" style="width:14px; height:14px; border-radius:50%; border:1px solid var(--border-color); cursor:pointer; display:inline-block;"></span>
+                                    <span class="death-bubble" data-type="success" data-idx="1" style="width:14px; height:14px; border-radius:50%; border:1px solid var(--border-color); cursor:pointer; display:inline-block;"></span>
+                                    <span class="death-bubble" data-type="success" data-idx="2" style="width:14px; height:14px; border-radius:50%; border:1px solid var(--border-color); cursor:pointer; display:inline-block;"></span>
+                                </div>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size: 11px;">Провалы:</span>
+                                <div class="death-bubbles" id="death-fail-bubbles" style="display:flex; gap:6px;">
+                                    <span class="death-bubble" data-type="fail" data-idx="0" style="width:14px; height:14px; border-radius:50%; border:1px solid var(--border-color); cursor:pointer; display:inline-block;"></span>
+                                    <span class="death-bubble" data-type="fail" data-idx="1" style="width:14px; height:14px; border-radius:50%; border:1px solid var(--border-color); cursor:pointer; display:inline-block;"></span>
+                                    <span class="death-bubble" data-type="fail" data-idx="2" style="width:14px; height:14px; border-radius:50%; border:1px solid var(--border-color); cursor:pointer; display:inline-block;"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Боевые характеристики (AC, Инициатива, Скорость, Кубы Здоровья) -->
+                    <div class="combat-grid">
+                        <div class="combat-box">
+                            <span class="combat-box-label">Класс Доспеха (AC)</span>
+                            <span class="combat-box-value view-only" id="sheet-ac-val">15</span>
+                            <input type="number" id="sheet-ac-override-input" class="edit-only combat-box-input" placeholder="Авто" style="width:100%; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:16px; font-weight:700; display:none;">
+                        </div>
+                        <div class="combat-box clickable view-only" id="btn-roll-initiative">
+                            <span class="combat-box-label">Инициатива</span>
+                            <span class="combat-box-value" id="sheet-init-val">+2</span>
+                            <span class="combat-box-roll-icon">🎲</span>
+                        </div>
+                        <div class="combat-box edit-only" style="display:none;">
+                            <span class="combat-box-label">Инициатива</span>
+                            <input type="number" id="sheet-init-override-input" class="combat-box-input" placeholder="Авто" style="width:100%; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:16px; font-weight:700;">
+                        </div>
+                        <div class="combat-box">
+                            <span class="combat-box-label">Скорость</span>
+                            <span class="combat-box-value view-only" id="sheet-speed-val">30 фт</span>
+                            <input type="number" id="sheet-speed-input" class="edit-only combat-box-input" value="30" style="width:100%; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:16px; font-weight:700; display:none;">
+                        </div>
+                        <div class="combat-box clickable view-only" id="btn-use-hit-die">
+                            <span class="combat-box-label">Кости Здоровья</span>
+                            <span class="combat-box-value" id="sheet-hd-val">3d6</span>
+                            <span class="combat-box-roll-icon">⛺</span>
+                        </div>
+                        <div class="combat-box edit-only" style="display:none;">
+                            <span class="combat-box-label">Кости Здоровья</span>
+                            <span class="combat-box-value" id="sheet-hd-val-edit">3d6</span>
+                        </div>
+                    </div>
+
+                    <!-- Оружие и атаки -->
+                    <div class="sheet-section">
+                        <h3>⚔️ Боевые атаки</h3>
+                        <div class="weapon-attacks-list" id="sheet-attacks-list">
+                            <!-- Список оружия с кнопкой броска -->
+                        </div>
+                        
+                        <div class="attack-adder-box" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px; display:flex; flex-direction:column; gap:8px;">
+                            <h4 style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Добавить свою атаку</h4>
+                            <input type="text" id="sheet-attack-name" placeholder="Название (например: Огненный снаряд)...">
+                            <div class="form-row" style="margin: 0; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                <input type="number" id="sheet-attack-bonus" placeholder="Бонус атаки (+5)">
+                                <input type="text" id="sheet-attack-damage" placeholder="Урон (1d10)">
+                            </div>
+                            <input type="text" id="sheet-attack-type" placeholder="Тип урона (огонь)">
+                            <button type="button" id="btn-sheet-add-attack" class="btn btn-secondary btn-sm btn-block">➕ Добавить атаку</button>
+                        </div>
+                    </div>
+
+                    <!-- Трекер состояний -->
+                    <div class="sheet-section view-only">
+                        <h3>⚠️ Состояния персонажа</h3>
+                        <div class="conditions-grid" id="sheet-conditions-grid">
+                            <!-- Чекбоксы состояний -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Вкладка 2: ХАРАКТЕРИСТИКИ / НАВЫКИ -->
+                <div id="sheet-tab-stats" class="tab-panel">
+                    <!-- Характеристики (СИЛ, ЛОВ, ТЕЛ...) -->
+                    <div class="abilities-detail-grid" id="sheet-abilities-grid">
+                        <!-- Заполняется динамически -->
+                    </div>
+
+                    <!-- Спасброски -->
+                    <div class="sheet-section" style="margin-top: 15px;">
+                        <h3>🛡️ Спасброски</h3>
+                        <div class="saves-sheet-list" id="sheet-saves-list">
+                            <!-- Список спасбросков -->
+                        </div>
+                    </div>
+
+                    <!-- Пассивные навыки -->
+                    <div class="combat-grid" style="margin-top: 15px; margin-bottom: 15px;">
+                        <div class="combat-box">
+                            <span class="combat-box-label">Пасс. Внимательность</span>
+                            <span class="combat-box-value" id="sheet-passive-perception">10</span>
+                        </div>
+                        <div class="combat-box">
+                            <span class="combat-box-label">Пасс. Проницательность</span>
+                            <span class="combat-box-value" id="sheet-passive-insight">10</span>
+                        </div>
+                        <div class="combat-box">
+                            <span class="combat-box-label">Пасс. Анализ</span>
+                            <span class="combat-box-value" id="sheet-passive-investigation">10</span>
+                        </div>
+                    </div>
+
+                    <!-- Навыки -->
+                    <div class="sheet-section">
+                        <h3>📜 Проверки навыков</h3>
+                        <div class="skills-sheet-list" id="sheet-skills-list">
+                            <!-- Навыки -->
+                        </div>
+                    </div>
+
+                    <!-- Владение инструментами -->
+                    <div class="sheet-section" style="margin-top: 15px;">
+                        <h3>🛠️ Владение инструментами</h3>
+                        <div class="tools-sheet-list" id="sheet-tools-list">
+                            <!-- Список инструментов -->
+                        </div>
+                        <div class="edit-only tool-adder" style="margin-top:10px; display:none; gap:8px;">
+                            <input type="text" id="sheet-add-tool-name" placeholder="Название инструмента..." style="flex-grow:1; padding:6px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:12px;">
+                            <button type="button" id="btn-sheet-add-tool" class="btn btn-secondary btn-sm">➕ Добавить</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Языки и прочие владения -->
+                    <div class="sheet-section" style="margin-top: 15px;">
+                        <h3>🗣️ Языки и прочие владения</h3>
+                        <div class="view-only" id="sheet-languages-proficiencies-view" style="font-size:12px; line-height:1.4;">
+                            <div><strong>Языки:</strong> <span id="sheet-languages-val"></span></div>
+                            <div style="margin-top:6px;"><strong>Прочие владения:</strong> <div id="sheet-other-proficiencies-val" style="white-space:pre-wrap; margin-top:2px;"></div></div>
+                        </div>
+                        <div class="edit-only" style="display:none; flex-direction:column; gap:8px; margin-top:10px;">
+                            <div class="form-group">
+                                <label>Языки</label>
+                                <input type="text" id="sheet-languages-input" placeholder="Например: Общий, Эльфийский...">
+                            </div>
+                            <div class="form-group">
+                                <label>Прочие владения</label>
+                                <textarea id="sheet-other-proficiencies-input" rows="2" placeholder="Например: Легкие доспехи, щиты..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Вкладка 3: ИНВЕНТАРЬ -->
+                <div id="sheet-tab-items" class="tab-panel">
+                    <!-- Полоса веса -->
+                    <div class="weight-card">
+                        <div class="weight-header">
+                            <span>Грузоподъемность (Вес)</span>
+                            <span id="sheet-weight-fraction">45 / 150 фт</span>
+                        </div>
+                        <div class="weight-progress-bar">
+                            <div id="sheet-weight-fill" class="weight-fill" style="width: 30%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Монеты -->
+                    <div class="coins-card" style="margin-top:15px; padding:15px; border-radius:var(--border-radius); background:var(--bg-card); border:1px solid var(--border-color);">
+                        <h4 style="margin-bottom:10px; font-size:14px;">Монеты (Coins)</h4>
+                        <div class="coins-grid" style="display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; text-align:center;">
+                            <div class="coin-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                <span class="coin-label cp" style="font-size:10px; font-weight:700; color:#b7791f;">ММ (CP)</span>
+                                <span class="coin-val view-only" id="sheet-coin-cp" style="font-size:14px; font-weight:600;">0</span>
+                                <input type="number" id="sheet-coin-cp-input" class="edit-only coin-input" value="0" min="0" style="width:100%; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; display:none;">
+                            </div>
+                            <div class="coin-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                <span class="coin-label sp" style="font-size:10px; font-weight:700; color:#718096;">СМ (SP)</span>
+                                <span class="coin-val view-only" id="sheet-coin-sp" style="font-size:14px; font-weight:600;">0</span>
+                                <input type="number" id="sheet-coin-sp-input" class="edit-only coin-input" value="0" min="0" style="width:100%; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; display:none;">
+                            </div>
+                            <div class="coin-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                <span class="coin-label ep" style="font-size:10px; font-weight:700; color:#319795;">ЭМ (EP)</span>
+                                <span class="coin-val view-only" id="sheet-coin-ep" style="font-size:14px; font-weight:600;">0</span>
+                                <input type="number" id="sheet-coin-ep-input" class="edit-only coin-input" value="0" min="0" style="width:100%; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; display:none;">
+                            </div>
+                            <div class="coin-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                <span class="coin-label gp" style="font-size:10px; font-weight:700; color:#d69e2e;">ЗМ (GP)</span>
+                                <span class="coin-val view-only" id="sheet-coin-gp" style="font-size:14px; font-weight:600;">0</span>
+                                <input type="number" id="sheet-coin-gp-input" class="edit-only coin-input" value="0" min="0" style="width:100%; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; display:none;">
+                            </div>
+                            <div class="coin-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                <span class="coin-label pp" style="font-size:10px; font-weight:700; color:#e2e8f0;">ПМ (PP)</span>
+                                <span class="coin-val view-only" id="sheet-coin-pp" style="font-size:14px; font-weight:600;">0</span>
+                                <input type="number" id="sheet-coin-pp-input" class="edit-only coin-input" value="0" min="0" style="width:100%; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; display:none;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Быстрое добавление предмета -->
+                    <div class="item-adder-sheet view-only" style="margin-top: 15px;">
+                        <input type="text" id="sheet-add-item-name" placeholder="Быстро добавить предмет...">
+                        <button type="button" id="btn-sheet-add-item" class="btn btn-secondary btn-sm">➕</button>
+                    </div>
+
+                    <!-- Таблица предметов -->
+                    <div class="items-list-container" style="margin-top: 15px;">
+                        <div class="items-list-header">
+                            <span>Экип</span>
+                            <span>Предмет</span>
+                            <span>Вес</span>
+                            <span>Кол-во</span>
+                            <span>Удалить</span>
+                        </div>
+                        <div class="items-list-rows" id="sheet-items-list">
+                            <!-- Предметы -->
+                        </div>
+                    </div>
+                    <button type="button" id="btn-sheet-new-item" class="btn btn-secondary btn-sm edit-only" style="margin-top: 10px; width:100%; display:none;">➕ Создать предмет</button>
+                </div>
+
+                <!-- Вкладка 4: МАГИЯ -->
+                <div id="sheet-tab-spells" class="tab-panel">
+                    <!-- Панель характеристик заклинаний -->
+                    <div class="spells-meta-row" id="sheet-spells-meta">
+                        <!-- DC и Спасброски от магии -->
+                    </div>
+
+                    <div class="edit-only spells-override-edit" style="display:none; padding:12px; border-radius:var(--border-radius); background:var(--bg-card); border:1px solid var(--border-color); margin-bottom:15px; display:flex; gap:10px;">
+                        <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
+                            <label style="font-size:10px; font-weight:700; color:var(--text-muted);">Сл. Спас DC Override</label>
+                            <input type="number" id="sheet-spell-dc-override-input" placeholder="Авто" style="padding:6px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                        </div>
+                        <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
+                            <label style="font-size:10px; font-weight:700; color:var(--text-muted);">Бонус Атаки Override</label>
+                            <input type="number" id="sheet-spell-attack-override-input" placeholder="Авто" style="padding:6px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                        </div>
+                    </div>
+
+                    <!-- Ячейки заклинаний -->
+                    <div class="spell-slots-tracker">
+                        <div id="sheet-spell-slots-tracker" class="view-only">
+                            <!-- Динамические кружки для отметки потраченных ячеек -->
+                        </div>
+                        <div id="sheet-spell-slots-edit" class="edit-only" style="display:none; margin-top: 15px; padding: 15px; border-radius: var(--border-radius); background: var(--bg-card); border:1px solid var(--border-color);">
+                            <h4 style="margin-bottom: 10px; font-size:14px;">Максимальные ячейки заклинаний</h4>
+                            <div class="slots-edit-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">1 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="1" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">2 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="2" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">3 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="3" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">4 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="4" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">5 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="5" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">6 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="6" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">7 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="7" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">8 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="8" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                                <div class="slot-edit-box" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    <span style="font-size:11px;">9 Круг</span>
+                                    <input type="number" class="spell-slot-max-input" data-level="9" value="0" min="0" max="9" style="width:50px; text-align:center; padding:4px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Книга заклинаний -->
+                    <div class="spellbook-container" style="margin-top: 15px;">
+                        <h3>🪄 Известные заклинания</h3>
+                        <div class="spells-by-level" id="sheet-spellbook-list">
+                            <!-- Заклинания -->
+                        </div>
+                        
+                        <div class="edit-only custom-spells-sheet-adder" style="display:none; margin-top: 15px; padding: 12px; border-radius: var(--border-radius); background: var(--bg-card); border:1px solid var(--border-color); display:flex; flex-direction:column; gap:6px;">
+                            <h4 style="font-size:13px; font-weight:700;">Создать заклинание</h4>
+                            <input type="text" id="sheet-spell-name" placeholder="Название заклинания..." style="padding:6px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                            <div class="form-row">
+                                <select id="sheet-spell-lvl" style="padding:6px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:#151e36; color:#fff;">
+                                    <option value="0">Заговор</option>
+                                    <option value="1">1-й уровень</option>
+                                    <option value="2">2-й уровень</option>
+                                    <option value="3">3-й уровень</option>
+                                    <option value="4">4-й уровень</option>
+                                    <option value="5">5-й уровень</option>
+                                    <option value="6">6-й уровень</option>
+                                    <option value="7">7-й уровень</option>
+                                    <option value="8">8-й уровень</option>
+                                    <option value="9">9-й уровень</option>
+                                </select>
+                                <input type="text" id="sheet-spell-school" placeholder="Школа (например: Иллюзия)" style="padding:6px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                            </div>
+                            <div class="form-row">
+                                <input type="text" id="sheet-spell-time" placeholder="Время (1 действие)" style="padding:6px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                                <input type="text" id="sheet-spell-range" placeholder="Дистанция (30 фт)" style="padding:6px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff;">
+                            </div>
+                            <textarea id="sheet-spell-desc" rows="2" placeholder="Описание эффекта..." style="padding:6px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-family:inherit; resize:vertical;"></textarea>
+                            <button type="button" id="btn-sheet-add-spell" class="btn btn-secondary btn-sm">➕ Добавить в книгу</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Вкладка 5: УМЕНИЯ / РЕСУРСЫ -->
+                <div id="sheet-tab-features" class="tab-panel">
+                    <!-- Черты характера D&D 2014 -->
+                    <div class="sheet-section personality-sheet-section">
+                        <h3>🧠 Характеристики личности</h3>
+                        <div class="view-only personality-grid" style="display:grid; grid-template-columns:1fr; gap:8px; margin-bottom:15px;">
+                            <div class="info-block"><strong>Черты характера:</strong> <span id="sheet-personality-val"></span></div>
+                            <div class="info-block"><strong>Идеалы:</strong> <span id="sheet-ideals-val"></span></div>
+                            <div class="info-block"><strong>Привязанности:</strong> <span id="sheet-bonds-val"></span></div>
+                            <div class="info-block"><strong>Слабости:</strong> <span id="sheet-flaws-val"></span></div>
+                        </div>
+                        <div class="edit-only personality-inputs" style="display:none; flex-direction:column; gap:8px; margin-bottom:15px;">
+                            <div class="form-group">
+                                <label>Черты характера</label>
+                                <textarea id="sheet-personality-input" rows="2" placeholder="Опишите характер..."></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Идеалы</label>
+                                <textarea id="sheet-ideals-input" rows="2" placeholder="Идеалы..."></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Привязанности</label>
+                                <textarea id="sheet-bonds-input" rows="2" placeholder="Привязанности..."></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Слабости</label>
+                                <textarea id="sheet-flaws-input" rows="2" placeholder="Слабости..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Трекеры классовых ресурсов -->
+                    <div class="class-resources-section" id="sheet-class-resources">
+                        <!-- Динамические трекеры -->
+                    </div>
+
+                    <div class="sheet-section">
+                        <h3>🧬 Расовые особенности</h3>
+                        <ul class="features-bullet-list view-only" id="sheet-racial-features">
+                            <!-- Особенности расы -->
+                        </ul>
+                        <textarea id="sheet-racial-features-input" class="edit-only form-textarea" rows="4" placeholder="Введите расовые особенности..." style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; display:none; resize:vertical; font-size:12px; font-family:inherit;"></textarea>
+                    </div>
+
+                    <div class="sheet-section">
+                        <h3>🛡️ Классовые умения</h3>
+                        <ul class="features-bullet-list view-only" id="sheet-class-features">
+                            <!-- Умения классов -->
+                        </ul>
+                        <textarea id="sheet-class-features-input" class="edit-only form-textarea" rows="6" placeholder="Введите классовые умения..." style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; display:none; resize:vertical; font-size:12px; font-family:inherit;"></textarea>
+                    </div>
+                    
+                    <div class="sheet-section">
+                        <h3>✨ Кастомные умения и черты</h3>
+                        <div id="sheet-custom-features-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+                            <!-- Список кастомных черт -->
+                        </div>
+                        <div class="edit-only feature-adder" style="display:none; padding:12px; border-radius:var(--border-radius); background:var(--bg-card); border:1px solid var(--border-color);">
+                            <h4 style="margin-bottom:8px; font-size:13px;">Добавить черту</h4>
+                            <input type="text" id="sheet-add-feat-name" placeholder="Название умения..." style="width:100%; padding:6px; margin-bottom:8px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:12px;">
+                            <textarea id="sheet-add-feat-desc" rows="2" placeholder="Описание..." style="width:100%; padding:6px; margin-bottom:8px; border-radius:6px; border:1px solid var(--border-color); background:rgba(0,0,0,0.2); color:#fff; font-size:12px; resize:vertical; font-family:inherit;"></textarea>
+                            <button type="button" id="btn-sheet-add-feat" class="btn btn-secondary btn-sm" style="width:100%;">➕ Добавить умение</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Вкладка 6: ЗАМЕТКИ -->
+                <div id="sheet-tab-notes" class="tab-panel">
+                    <!-- Внешность на вкладке Заметки -->
+                    <div class="sheet-section appearance-section" style="margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 20px;">
+                        <h3>👤 Внешность и описание</h3>
+                        <div class="view-only appearance-grid" style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px; font-size:12px;">
+                            <div><strong>Возраст:</strong> <span id="sheet-age-val"></span></div>
+                            <div><strong>Рост:</strong> <span id="sheet-height-val"></span></div>
+                            <div><strong>Вес:</strong> <span id="sheet-weight-val"></span></div>
+                            <div><strong>Глаза:</strong> <span id="sheet-eyes-val"></span></div>
+                            <div><strong>Кожа:</strong> <span id="sheet-skin-val"></span></div>
+                            <div><strong>Волосы:</strong> <span id="sheet-hair-val"></span></div>
+                        </div>
+                        <div class="edit-only appearance-inputs" style="display:none; flex-direction:column; gap:8px;">
+                            <div class="form-row" style="margin:0; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                <input type="text" id="sheet-age-input" placeholder="Возраст" style="padding:6px; font-size:12px;">
+                                <input type="text" id="sheet-height-input" placeholder="Рост" style="padding:6px; font-size:12px;">
+                            </div>
+                            <div class="form-row" style="margin:0; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                <input type="text" id="sheet-weight-input" placeholder="Вес" style="padding:6px; font-size:12px;">
+                                <input type="text" id="sheet-eyes-input" placeholder="Глаза" style="padding:6px; font-size:12px;">
+                            </div>
+                            <div class="form-row" style="margin:0; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                <input type="text" id="sheet-skin-input" placeholder="Кожа" style="padding:6px; font-size:12px;">
+                                <input type="text" id="sheet-hair-input" placeholder="Волосы" style="padding:6px; font-size:12px;">
+                            </div>
+                        </div>
+                        <div style="margin-top:15px; font-size:12px;">
+                            <strong>Предыстория персонажа (Backstory):</strong>
+                            <div id="sheet-backstory-val" class="view-only" style="white-space:pre-wrap; margin-top:4px; padding:10px; border-radius:8px; background:rgba(0,0,0,0.15); min-height:60px;"></div>
+                            <textarea id="sheet-backstory-input" class="edit-only" rows="4" placeholder="Введите историю персонажа..." style="display:none; width:100%; margin-top:4px; padding:6px; font-size:12px; font-family:inherit; resize:vertical;"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="notes-form">
+                        <label for="sheet-notes-area">Заметки о приключении:</label>
+                        <textarea id="sheet-notes-area" rows="10" placeholder="Записывайте сюда квесты, контакты NPC, рецепты зелий или историю своего персонажа..."></textarea>
+                        <button type="button" id="btn-save-notes" class="btn btn-success btn-block" style="margin-top: 10px;">
+                            Сохранить заметки
+                        </button>
+                    </div>
+                </div>
+            </main>
+        </section>
+    </div>
+
+    <!-- Контейнер для печатной версии листа PDF -->
+    <div id="print-sheet" class="print-only"></div>
+
+    <!-- Всплывающие уведомления -->
+    <div id="toast-container"></div>
+
+    <!-- Подключаем базы данных и скрипты logic -->
+    <script src="dnd_data.js?v=2"></script>
+    <script src="models.js?v=2"></script>
+    <script src="app.js?v=2"></script>
+</body>
+</html>
