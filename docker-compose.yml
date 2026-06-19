@@ -9,5 +9,7 @@ services:
       - .env
     environment:
       - DB_PATH=/app/data/dnd_bot.db
+    ports:
+      - "8000:8000"
     volumes:
       - ./data:/app/data
