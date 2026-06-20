@@ -30,34 +30,79 @@ class Character {
         this.race = data.race || "Human";
         this.subrace = data.subrace || "";
         
-        // classes is an array of { className: string, level: number, subclass: string }
-        this.classes = data.classes && data.classes.length ? data.classes : [{ className: "Fighter", level: 1, subclass: "" }];
+        // Classes normalization (handle Russian class names and format from bot)
+        if (data.classes && data.classes.length) {
+            this.classes = data.classes;
+        } else if (data.class && typeof data.class === 'string') {
+            const RU_TO_EN_CLASS = {
+                "Воин": "Fighter",
+                "Жрец": "Cleric",
+                "Волшебник": "Wizard",
+                "Плут": "Rogue",
+                "Друид": "Druid",
+                "Бард": "Bard",
+                "Варвар": "Barbarian",
+                "Монах": "Monk",
+                "Паладин": "Paladin",
+                "Следопыт": "Ranger",
+                "Колдун": "Warlock",
+                "Чародей": "Sorcerer"
+            };
+            const parts = data.class.split(" / ");
+            const parsedClasses = [];
+            parts.forEach(part => {
+                const match = part.trim().match(/^([^\d]+)(?:\s+(\d+))?$/);
+                if (match) {
+                    const rawClassName = match[1].trim();
+                    const level = match[2] ? parseInt(match[2], 10) : 1;
+                    let className = RU_TO_EN_CLASS[rawClassName] || rawClassName;
+                    if (!DND_CLASSES[className]) {
+                        const foundKey = Object.keys(DND_CLASSES).find(k => k.toLowerCase() === className.toLowerCase());
+                        if (foundKey) {
+                            className = foundKey;
+                        } else {
+                            const ruKey = Object.keys(RU_TO_EN_CLASS).find(k => k.toLowerCase() === rawClassName.toLowerCase());
+                            if (ruKey) {
+                                className = RU_TO_EN_CLASS[ruKey];
+                            }
+                        }
+                    }
+                    if (!DND_CLASSES[className]) {
+                        className = "Fighter";
+                    }
+                    parsedClasses.push({ className, level, subclass: "" });
+                }
+            });
+            this.classes = parsedClasses.length ? parsedClasses : [{ className: "Fighter", level: 1, subclass: "" }];
+        } else {
+            this.classes = [{ className: "Fighter", level: 1, subclass: "" }];
+        }
         
         // D&D 2014 Extended Identity
-        this.playerName = data.playerName || "";
+        this.playerName = data.playerName || data.player_name || "";
         this.languages = data.languages || "";
-        this.otherProficiencies = data.otherProficiencies || "";
+        this.otherProficiencies = data.otherProficiencies || data.other_proficiencies || "";
         
         // Custom Stat/Combat Overrides
-        this.customSpeed = data.customSpeed !== undefined && data.customSpeed !== null ? data.customSpeed : null;
-        this.customAC = data.customAC !== undefined && data.customAC !== null ? data.customAC : null;
-        this.customInitiative = data.customInitiative !== undefined && data.customInitiative !== null ? data.customInitiative : null;
-        this.customSpellDC = data.customSpellDC !== undefined && data.customSpellDC !== null ? data.customSpellDC : null;
-        this.customSpellAttack = data.customSpellAttack !== undefined && data.customSpellAttack !== null ? data.customSpellAttack : null;
+        this.customSpeed = data.customSpeed !== undefined && data.customSpeed !== null ? data.customSpeed : (data.custom_speed !== undefined && data.custom_speed !== null ? data.custom_speed : null);
+        this.customAC = data.customAC !== undefined && data.customAC !== null ? data.customAC : (data.custom_ac !== undefined && data.custom_ac !== null ? data.custom_ac : null);
+        this.customInitiative = data.customInitiative !== undefined && data.customInitiative !== null ? data.customInitiative : (data.custom_initiative !== undefined && data.custom_initiative !== null ? data.custom_initiative : null);
+        this.customSpellDC = data.customSpellDC !== undefined && data.customSpellDC !== null ? data.customSpellDC : (data.custom_spell_dc !== undefined && data.custom_spell_dc !== null ? data.custom_spell_dc : null);
+        this.customSpellAttack = data.customSpellAttack !== undefined && data.customSpellAttack !== null ? data.customSpellAttack : (data.custom_spell_attack !== undefined && data.custom_spell_attack !== null ? data.custom_spell_attack : null);
         
         // Death Saves
-        this.deathSaves = data.deathSaves || { successes: 0, failures: 0 };
+        this.deathSaves = data.deathSaves || data.death_saves || { successes: 0, failures: 0 };
         
         // Coins (Money)
         this.coins = data.coins || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
         
         // Custom lists
-        this.customAttacks = data.customAttacks || [];
-        this.customFeatures = data.customFeatures || [];
-        this.customSpells = data.customSpells || [];
+        this.customAttacks = data.customAttacks || data.custom_attacks || [];
+        this.customFeatures = data.customFeatures || data.custom_features || [];
+        this.customSpells = data.customSpells || data.custom_spells || [];
         
         // Personality & Backstory
-        this.personalityTraits = data.personalityTraits || "";
+        this.personalityTraits = data.personalityTraits || data.personality_traits || "";
         this.ideals = data.ideals || "";
         this.bonds = data.bonds || "";
         this.flaws = data.flaws || "";
@@ -73,40 +118,68 @@ class Character {
         this.skin = data.skin || "";
         this.hair = data.hair || "";
         
-        // base stats
-        this.stats = data.stats || {
-            strength: 10,
-            dexterity: 10,
-            constitution: 10,
-            intelligence: 10,
-            wisdom: 10,
-            charisma: 10
-        };
+        // Base stats normalization (reconstruct stats from modifiers if stats object is missing)
+        if (data.stats) {
+            this.stats = data.stats;
+        } else {
+            this.stats = {
+                strength: 10 + 2 * (data.mod_strength !== undefined ? Number(data.mod_strength) : 0),
+                dexterity: 10 + 2 * (data.mod_dexterity !== undefined ? Number(data.mod_dexterity) : 0),
+                constitution: 10 + 2 * (data.mod_constitution !== undefined ? Number(data.mod_constitution) : 0),
+                intelligence: 10 + 2 * (data.mod_intelligence !== undefined ? Number(data.mod_intelligence) : 0),
+                wisdom: 10 + 2 * (data.mod_wisdom !== undefined ? Number(data.mod_wisdom) : 0),
+                charisma: 10 + 2 * (data.mod_charisma !== undefined ? Number(data.mod_charisma) : 0)
+            };
+        }
 
         // Custom choice data for stats generation (Standard Array, Point Buy, Manual, Roll)
-        this.statGenMethod = data.statGenMethod || "standard_array";
-        this.statGenData = data.statGenData || {};
+        this.statGenMethod = data.statGenMethod || data.stat_gen_method || "standard_array";
+        this.statGenData = data.statGenData || data.stat_gen_data || {};
 
         // Proficiencies
-        this.savingThrows = data.savingThrows || []; // List of ability names in Russian (Сила, Ловкость, etc.)
+        this.savingThrows = data.savingThrows || data.saving_throws || []; // List of ability names in Russian (Сила, Ловкость, etc.)
         
-        // skills: object mapping skill name to level ('none', 'proficient', 'expert', 'half')
-        this.skills = data.skills || {}; 
+        // Skills normalization (convert array representation from DB columns to object dictionary if needed)
+        if (data.skills) {
+            if (Array.isArray(data.skills)) {
+                this.skills = {};
+                data.skills.forEach(s => {
+                    this.skills[s] = "proficient";
+                });
+            } else {
+                this.skills = data.skills;
+            }
+        } else {
+            this.skills = {};
+        }
         
-        this.tools = data.tools || [];
+        // Tools normalization (convert dictionary representation from FSM full_data to array)
+        let toolsInput = data.tools || [];
+        if (typeof toolsInput === 'object' && !Array.isArray(toolsInput)) {
+            toolsInput = Object.keys(toolsInput);
+        }
+        this.tools = toolsInput;
         
         // hp
         this.hp = data.hp || { current: 10, max: 10, temp: 0 };
+        if (data.hp_max !== undefined) {
+            this.hp.max = data.hp_max;
+            if (data.hp_current !== undefined) {
+                this.hp.current = data.hp_current;
+            } else {
+                this.hp.current = data.hp_max;
+            }
+        }
         
         // Hit Dice spent per class die size (e.g. { "d10": 0 })
-        this.hitDiceSpent = data.hitDiceSpent || {};
+        this.hitDiceSpent = data.hitDiceSpent || data.hit_dice_spent || {};
         
         // Inventory
         this.equipment = data.equipment || [];
         
         // Spellcasting
         this.spells = data.spells || []; // List of { name, level, prepared }
-        this.spellSlotsSpent = data.spellSlotsSpent || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0 };
+        this.spellSlotsSpent = data.spellSlotsSpent || data.spell_slots_spent || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0 };
         
         // Trackers
         this.conditions = data.conditions || [];
@@ -116,6 +189,9 @@ class Character {
         
         // custom_formulas is stored as key-value pairs
         this.custom_formulas = data.custom_formulas || {};
+        
+        // Minimum roll constraints for skills
+        this.minRolls = data.minRolls || data.min_rolls || {};
         
         // Active status
         this.is_active = !!data.is_active;

@@ -2,13 +2,14 @@ from aiogram import Router, html, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, ReplyKeyboardRemove, InlineKeyboardButton, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.fsm.context import FSMContext
 from keyboards import get_dice_keyboard, get_dice_keyboard_for_user
 from services.db import DatabaseService
 
 router = Router(name="common")
 
 @router.message(CommandStart())
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     """
     Обработчик команды /start.
     Проверяет наличие персонажа в базе данных.
@@ -16,11 +17,21 @@ async def cmd_start(message: Message):
     """
     user_id = message.from_user.id
     
-    # Check for deep link starting keyboard config
+    # Check for deep link starting config/wizard
     args = message.text.split(maxsplit=1)
-    if len(args) > 1 and args[1] == "keyboard":
-        await cmd_keyboard(message)
-        return
+    if len(args) > 1:
+        param = args[1]
+        if param == "keyboard":
+            await cmd_keyboard(message)
+            return
+        elif param == "characters":
+            from handlers.setup import list_characters_menu
+            await list_characters_menu(message, state)
+            return
+        elif param == "create_character":
+            from handlers.setup import start_character_setup
+            await start_character_setup(message, state)
+            return
 
     character = await DatabaseService.get_character(user_id)
     user_name = html.quote(message.from_user.full_name)

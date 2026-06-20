@@ -50,6 +50,7 @@ class CharacterSetupStates(StatesGroup):
     selecting_skills = State()
     selecting_tools = State()
     selecting_expertise = State()     # Выбор компетентности (навыки/инструменты)
+    selecting_min_rolls = State()     # Выбор минимального d20 на навыки
     reviewing_data = State()          # Просмотр и подтверждение данных
     editing_menu = State()            # Выбор поля для изменения
     adding_custom_formula_name = State() # Шаг добавления названия формулы
@@ -70,6 +71,7 @@ CREATION_STATES = {
     CharacterSetupStates.selecting_skills.state,
     CharacterSetupStates.selecting_tools.state,
     CharacterSetupStates.selecting_expertise.state,
+    CharacterSetupStates.selecting_min_rolls.state,
     CharacterSetupStates.reviewing_data.state,
 }
 
@@ -296,6 +298,15 @@ async def prompt_for_creation_state(chat_id: int, bot: Bot, state: FSMContext, s
                  "<i>Когда закончите, нажмите кнопку внизу.</i>",
             reply_markup=get_expertise_keyboard(skills, tools, expertise)
         )
+    elif state_name == CharacterSetupStates.selecting_min_rolls.state:
+        skills = data.get("skills", [])
+        min_rolls = data.get("min_rolls", {})
+        sent_msg = await bot.send_message(
+            chat_id=chat_id,
+            text="Шаг 14: Установите <b>минимальное значение d20</b> для навыков (например, для классовых умений вроде Reliable Talent):\n"
+                 "<i>Нажимайте на навыки, чтобы изменить минимум: Нет ➔ 8 ➔ 10 ➔ 12 ➔ Нет.\nКогда закончите, нажмите кнопку внизу.</i>",
+            reply_markup=get_minimum_rolls_keyboard(skills, min_rolls)
+        )
     elif state_name == CharacterSetupStates.reviewing_data.state:
         sent_msg = await bot.send_message(
             chat_id=chat_id,
@@ -456,6 +467,12 @@ def _get_character_review_text(data: dict) -> str:
     skills_str = _format_items_with_expertise(data.get("skills", []), expertise)
     tools_str = _format_items_with_expertise(data.get("tools", []), expertise)
     
+    min_rolls = data.get("min_rolls", {})
+    min_rolls_str = ""
+    if min_rolls:
+        min_rolls_list = [f"• {k}: <code>{v}</code>" for k, v in min_rolls.items()]
+        min_rolls_str = "🎲 <b>Минимальный куб для навыков:</b>\n" + "\n".join(min_rolls_list) + "\n\n"
+        
     format_mod = lambda v: f"+{v}" if v >= 0 else str(v)
     
     return (
@@ -474,13 +491,21 @@ def _get_character_review_text(data: dict) -> str:
         f"🛡️ <b>Владение спасбросками:</b> {saves_str}\n"
         f"📜 <b>Владение навыками:</b> {skills_str}\n"
         f"🛠️ <b>Владение инструментами:</b> {tools_str}\n\n"
+        f"{min_rolls_str}"
         f"<i>Вы можете подтвердить эти данные или изменить любой из разделов.</i>"
     )
 
 def format_character_card(character: dict) -> str:
     """Форматирует красивую карточку персонажа (характеристики и владения) одним сообщением."""
     full_data = character.get("full_data", {})
+    if isinstance(full_data, str):
+        try:
+            full_data = json.loads(full_data)
+        except Exception:
+            full_data = {}
+            
     expertise = []
+    min_rolls = {}
     if isinstance(full_data, dict):
         fd_skills = full_data.get("skills", {})
         if isinstance(fd_skills, dict):
@@ -492,11 +517,17 @@ def format_character_card(character: dict) -> str:
             for k, v in fd_tools.items():
                 if v == "expert":
                     expertise.append(k)
+        min_rolls = full_data.get("min_rolls", {}) or full_data.get("minRolls", {})
 
     saves_str = ", ".join(character.get("saving_throws", [])) if character.get("saving_throws") else "нет"
     skills_str = _format_items_with_expertise(character.get("skills", []), expertise)
     tools_str = _format_items_with_expertise(character.get("tools", []), expertise)
     
+    min_rolls_str = ""
+    if min_rolls:
+        min_rolls_list = [f"• {k}: <code>{v}</code>" for k, v in min_rolls.items()]
+        min_rolls_str = "🎲 <b>Минимальный куб для навыков:</b>\n" + "\n".join(min_rolls_list) + "\n\n"
+
     format_mod = lambda v: f"+{v}" if v >= 0 else str(v)
     
     # Имя и класс
@@ -523,7 +554,8 @@ def format_character_card(character: dict) -> str:
         f"• Харизма: <code>{format_mod(character.get('mod_charisma', 0))}</code>\n\n"
         f"🛡️ <b>Владение спасбросками:</b> {saves_str}\n"
         f"📜 <b>Владение навыками:</b> {skills_str}\n"
-        f"🛠️ <b>Владение инструментами:</b> {tools_str}\n"
+        f"🛠️ <b>Владение инструментами:</b> {tools_str}\n\n"
+        f"{min_rolls_str}"
         f"{formulas_str}"
     )
 
@@ -558,6 +590,25 @@ async def cmd_show_sheet(message: Message, state: FSMContext):
 async def list_characters_menu(message: Message, state: FSMContext):
     """Выводит меню управления персонажами игрока."""
     await state.clear()
+    
+    if message.chat.type != "private":
+        bot_user = await message.bot.get_me()
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(
+                text="👥 Персонажи в ЛС",
+                url=f"https://t.me/{bot_user.username}?start=characters"
+            )
+        )
+        await message.reply(
+            "👥 <b>Управление персонажами:</b>\n\n"
+            "Управление персонажами выполняется в личной переписке с ботом, "
+            "чтобы не засорять групповой чат и не раскрывать ваши настройки другим.\n\n"
+            "Нажмите кнопку ниже, перейдите в ЛС и нажмите «Запустить»:",
+            reply_markup=builder.as_markup()
+        )
+        return
+
     user_id = message.from_user.id
     characters = await DatabaseService.get_all_characters(user_id)
     
@@ -698,6 +749,7 @@ async def handle_edit_active_character(callback: CallbackQuery, state: FSMContex
         
     full_data = active_char.get("full_data", {})
     expertise = []
+    min_rolls = {}
     if isinstance(full_data, dict):
         fd_skills = full_data.get("skills", {})
         if isinstance(fd_skills, dict):
@@ -709,6 +761,7 @@ async def handle_edit_active_character(callback: CallbackQuery, state: FSMContex
             for k, v in fd_tools.items():
                 if v == "expert":
                     expertise.append(k)
+        min_rolls = full_data.get("min_rolls", {}) or full_data.get("minRolls", {})
                     
     await state.clear()
     # Подгружаем все данные в сессию FSM
@@ -727,6 +780,7 @@ async def handle_edit_active_character(callback: CallbackQuery, state: FSMContex
         skills=active_char["skills"],
         tools=active_char["tools"],
         expertise=expertise,
+        min_rolls=min_rolls,
         full_data=full_data
     )
     
@@ -756,6 +810,7 @@ async def handle_edit_field(callback: CallbackQuery, state: FSMContext):
         "skills": CharacterSetupStates.selecting_skills,
         "tools": CharacterSetupStates.selecting_tools,
         "expertise": CharacterSetupStates.selecting_expertise,
+        "min_rolls": CharacterSetupStates.selecting_min_rolls,
     }
 
     FIELD_PROMPTS = {
@@ -767,6 +822,7 @@ async def handle_edit_field(callback: CallbackQuery, state: FSMContext):
         "skills": "✏️ Отметьте <b>навыки</b> для вашего персонажа:",
         "tools": "✏️ Отметьте <b>инструменты</b> для вашего персонажа:",
         "expertise": "✏️ Отметьте <b>навыки и инструменты</b>, в которых у персонажа компетентность:",
+        "min_rolls": "🎲 Установите <b>минимальные значения</b> куба d20 для навыков:",
     }
 
     target_state = FIELD_TO_STATE.get(field)
@@ -809,6 +865,13 @@ async def handle_edit_field(callback: CallbackQuery, state: FSMContext):
         sent_msg = await callback.message.answer(
             FIELD_PROMPTS[field] + "\n<i>Когда закончите, нажмите кнопку внизу.</i>",
             reply_markup=get_expertise_keyboard(skills, tools, expertise)
+        )
+    elif field == "min_rolls":
+        skills = data.get("skills", [])
+        min_rolls = data.get("min_rolls", {})
+        sent_msg = await callback.message.answer(
+            FIELD_PROMPTS[field] + "\n<i>Когда закончите, нажмите кнопку внизу.</i>",
+            reply_markup=get_minimum_rolls_keyboard(skills, min_rolls)
         )
     elif field == "class":
         sent_msg = await callback.message.answer(
@@ -1100,6 +1163,23 @@ async def handle_formula_delete_select(callback: CallbackQuery, state: FSMContex
 @router.message(Command("create_character"))
 async def start_character_setup(message: Message, state: FSMContext):
     """Начало процесса создания персонажа."""
+    if message.chat.type != "private":
+        bot_user = await message.bot.get_me()
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(
+                text="➕ Создать персонажа в ЛС",
+                url=f"https://t.me/{bot_user.username}?start=create_character"
+            )
+        )
+        await message.reply(
+            "🧙‍♂️ <b>Создание персонажа:</b>\n\n"
+            "Создание персонажа выполняется через интерактивный мастер в личной переписке с ботом.\n\n"
+            "Нажмите кнопку ниже, перейдите в ЛС и нажмите «Запустить» для создания героя:",
+            reply_markup=builder.as_markup()
+        )
+        return
+
     has_incomplete = await check_incomplete_creation(message.chat.id, message.bot, state)
     if has_incomplete:
         try:
@@ -1696,9 +1776,94 @@ async def finish_expertise(callback: CallbackQuery, state: FSMContext):
         
     if data.get("is_editing") and data.get("edit_field") == "expertise":
         await state.update_data(is_editing=False, edit_field=None)
+        await state.set_state(CharacterSetupStates.reviewing_data)
+        await callback.answer("Компетентность сохранена!")
+        sent_msg = await callback.message.answer(
+            _get_character_review_text(await state.get_data()),
+            reply_markup=get_review_keyboard()
+        )
+        await state.update_data(last_bot_msg_id=sent_msg.message_id)
+        return
+        
+    skills = data.get("skills", [])
+    if not skills:
+        await state.set_state(CharacterSetupStates.reviewing_data)
+        await callback.answer("Компетентность сохранена!")
+        sent_msg = await callback.message.answer(
+            _get_character_review_text(data),
+            reply_markup=get_review_keyboard()
+        )
+        await state.update_data(last_bot_msg_id=sent_msg.message_id)
+        return
+        
+    await state.set_state(CharacterSetupStates.selecting_min_rolls)
+    await callback.answer("Компетентность сохранена!")
+    min_rolls = data.get("min_rolls", {})
+    sent_msg = await callback.message.answer(
+        "🎲 <b>Минимальное значение куба d20 для навыков</b>\n\n"
+        "Вы можете установить минимальное значение для броска куба d20 на определенные навыки. "
+        "Например, если у вашего Плута есть особенность «Надежный талант» (Reliable Talent), выберите нужные навыки и установите минимум 10. "
+        "Если на d20 выпадет меньше установленного значения, будет автоматически засчитан минимум.\n\n"
+        "<i>Нажимайте на навыки, чтобы изменить минимум: Нет ➔ 8 ➔ 10 ➔ 12 ➔ Нет.</i>",
+        reply_markup=get_minimum_rolls_keyboard(skills, min_rolls)
+    )
+    await state.update_data(last_bot_msg_id=sent_msg.message_id)
+
+# Обработка выбора минимального значения d20 на навыки
+@router.callback_query(StateFilter(CharacterSetupStates.selecting_min_rolls), F.data.startswith("cycle_min:"))
+async def toggle_min(callback: CallbackQuery, state: FSMContext):
+    idx_str = callback.data.split(":", 1)[1]
+    try:
+        idx = int(idx_str)
+        skill = ALL_SKILLS[idx]
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ Ошибка: навык не найден.")
+        return
+        
+    data = await state.get_data()
+    min_rolls = dict(data.get("min_rolls", {}))
+    
+    current_val = min_rolls.get(skill, 0)
+    # Cycle: 0 -> 8 -> 10 -> 12 -> 0
+    if current_val == 0:
+        new_val = 8
+    elif current_val == 8:
+        new_val = 10
+    elif current_val == 10:
+        new_val = 12
+    else:
+        new_val = 0
+        
+    if new_val == 0:
+        min_rolls.pop(skill, None)
+    else:
+        min_rolls[skill] = new_val
+        
+    await state.update_data(min_rolls=min_rolls)
+    await callback.answer(f"{skill}: минимум {new_val}" if new_val > 0 else f"{skill}: без минимума")
+    
+    try:
+        skills = data.get("skills", [])
+        await callback.message.edit_reply_markup(
+            reply_markup=get_minimum_rolls_keyboard(skills, min_rolls)
+        )
+    except Exception:
+        pass
+
+@router.callback_query(StateFilter(CharacterSetupStates.selecting_min_rolls), F.data == "done_min_rolls")
+async def done_min_rolls(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    if data.get("is_editing") and data.get("edit_field") == "min_rolls":
+        await state.update_data(is_editing=False, edit_field=None)
         
     await state.set_state(CharacterSetupStates.reviewing_data)
-    await callback.answer("Компетентность сохранена!")
+    await callback.answer("Минимальные броски сохранены!")
+    
     sent_msg = await callback.message.answer(
         _get_character_review_text(await state.get_data()),
         reply_markup=get_review_keyboard()
@@ -1763,6 +1928,7 @@ async def confirm_character_data(callback: CallbackQuery, state: FSMContext):
     existing_full_data["mod_wisdom"] = data["mod_wisdom"]
     existing_full_data["mod_charisma"] = data["mod_charisma"]
     existing_full_data["saving_throws"] = data.get("saving_throws", [])
+    existing_full_data["min_rolls"] = data.get("min_rolls", {})
     
     full_data_str = json.dumps(existing_full_data, ensure_ascii=False)
     
@@ -2080,7 +2246,7 @@ async def process_binding_link(message: Message, state: FSMContext):
         await state.clear()
         if text.startswith("/start"):
             from handlers.common import cmd_start
-            await cmd_start(message)
+            await cmd_start(message, state)
         elif text.startswith("/help"):
             from handlers.common import cmd_help
             await cmd_help(message)

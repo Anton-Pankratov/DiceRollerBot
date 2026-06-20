@@ -2373,12 +2373,15 @@ function updateDashboardStatsTab() {
         const mod = char.getSkillModifier(skill);
         const attr = ALL_SKILLS_META[skill].attr;
         
+        const minVal = char.minRolls ? (char.minRolls[skill] || 0) : 0;
+        const minBadge = minVal > 0 ? ` <span class="skill-min-badge" style="font-size:10px; opacity:0.85; color: #ffbc00; background: rgba(255, 188, 0, 0.15); padding: 1px 4px; border-radius: 4px; margin-left: 4px;">🎲≥${minVal}</span>` : '';
+        
         const row = document.createElement('div');
         row.className = 'skills-sheet-row';
         row.innerHTML = `
             <div class="row-left">
                 <div class="prof-indicator ${level !== 'none' ? level : ''}"></div>
-                <span class="row-name">${skill} <small class="row-attr">${attr.substring(0,3).toUpperCase()}</small></span>
+                <span class="row-name">${skill}${minBadge} <small class="row-attr">${attr.substring(0,3).toUpperCase()}</small></span>
             </div>
             <span class="row-mod">${formatMod(mod)} 🎲</span>
         `;

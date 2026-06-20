@@ -165,8 +165,23 @@ async def roll_formula_endpoint(request: web.Request) -> web.Response:
         if not formula_expr:
             return web.json_response({"error": "Формула не указана"}, status=400)
             
-        # Бросаем кубики
-        total, rolls, mod, formula_str = roll_custom_formula(formula_expr)
+        # Бросаем кубики с учетом минимального куба для навыков
+        min_d20_val = 0
+        if formula_name.startswith("Проверка навыка:"):
+            skill_name = formula_name.replace("Проверка навыка:", "").strip()
+            character = await DatabaseService.get_character(user_id)
+            if character:
+                full_data = character.get("full_data", {})
+                if isinstance(full_data, str):
+                    try:
+                        full_data = json.loads(full_data)
+                    except Exception:
+                        full_data = {}
+                if isinstance(full_data, dict):
+                    min_rolls = full_data.get("min_rolls", {}) or full_data.get("minRolls", {})
+                    min_d20_val = min_rolls.get(skill_name, 0)
+                    
+        total, rolls, mod, formula_str = roll_custom_formula(formula_expr, min_d20_val=min_d20_val)
         
         # Оформляем красивый отчет
         mention = f"@{user['username']}" if user.get('username') else user.get('first_name', 'Игрок')

@@ -109,7 +109,7 @@ for tool in ALL_TOOLS:
         short = tool.lower().replace("музыкальный инструмент: ", "")
         TOOL_MATCH_MAP[short] = tool
 
-def roll_custom_formula(formula_expr: str) -> tuple[int, list[int], int, str]:
+def roll_custom_formula(formula_expr: str, min_d20_val: int = 0) -> tuple[int, list[int], int, str]:
     """
     Парсит формулу вида "2d6+4", "d20-1", "8d6" и совершает бросок.
     Возвращает: (итоговый_результат, список_бросков_кубиков, модификатор, текстовая_формула)
@@ -133,15 +133,33 @@ def roll_custom_formula(formula_expr: str) -> tuple[int, list[int], int, str]:
         
     # Бросаем кубики
     rolls = [random.randint(1, sides) for _ in range(num_dice)]
+    
+    # Заменяем значения для d20, если они меньше min_d20_val
+    replaced_rolls = []
+    for r in rolls:
+        if sides == 20 and r < min_d20_val:
+            replaced_rolls.append((r, min_d20_val))
+        else:
+            replaced_rolls.append((r, None))
+            
+    # Применяем замену к rolls
+    rolls = [new_v if new_v is not None else orig_v for orig_v, new_v in replaced_rolls]
     sum_rolls = sum(rolls)
     total = sum_rolls + mod
     
     # Формируем красивую формулу
-    rolls_str = " + ".join(map(str, rolls))
+    rolls_fmt = []
+    for orig_v, new_v in replaced_rolls:
+        if new_v is not None:
+            rolls_fmt.append(f"{orig_v} ➔ {new_v}")
+        else:
+            rolls_fmt.append(str(orig_v))
+            
+    rolls_str = " + ".join(rolls_fmt)
     if num_dice > 1:
         formula_str = f"({rolls_str})"
     else:
-        formula_str = f"{sum_rolls}"
+        formula_str = f"{rolls_str}"
         
     if sign and mod_str:
         formula_str += f" {sign} {mod_str}"
@@ -561,32 +579,63 @@ async def evaluate_check_for_character(
     # 6. Парсинг Альтернативной/Взаимозаменяемой характеристики
     override_attr = None
 
-    # Функция генерации броска d20 с учетом преимущества/помехи/пассивности
-    async def make_d20_roll() -> tuple[int, str]:
+    # Функция генерации броска d20 с учетом преимущества/помехи/пассивности и минимального значения
+    async def make_d20_roll(min_val: int = 0) -> tuple[int, str]:
         if is_passive:
-            return 10, "<b>10</b> (d20, пассивно)"
+            val = max(10, min_val) if min_val > 0 else 10
+            return val, f"<b>{val}</b> (d20, пассивно)"
         
         await _send_dice_sticker(message, 20)
         
         if has_advantage and not has_disadvantage:
             r1 = random.randint(1, 20)
             r2 = random.randint(1, 20)
-            chosen = max(r1, r2)
-            if chosen == r1:
-                return chosen, f"<b>{r1}</b> и ~~{r2}~~ (d20 с преимуществом)"
+            if r1 >= r2:
+                orig_chosen = r1
+                if min_val > 0 and orig_chosen < min_val:
+                    r1_str = f"<b>{r1} ➔ {min_val}</b>"
+                    chosen = min_val
+                else:
+                    r1_str = f"<b>{r1}</b>"
+                    chosen = orig_chosen
+                r2_str = f"~~{r2}~~"
             else:
-                return chosen, f"~~{r1}~~ и <b>{r2}</b> (d20 с преимуществом)"
+                orig_chosen = r2
+                if min_val > 0 and orig_chosen < min_val:
+                    r2_str = f"<b>{r2} ➔ {min_val}</b>"
+                    chosen = min_val
+                else:
+                    r2_str = f"<b>{r2}</b>"
+                    chosen = orig_chosen
+                r1_str = f"~~{r1}~~"
+            return chosen, f"{r1_str} и {r2_str} (d20 с преимуществом)"
             
         if has_disadvantage and not has_advantage:
             r1 = random.randint(1, 20)
             r2 = random.randint(1, 20)
-            chosen = min(r1, r2)
-            if chosen == r1:
-                return chosen, f"<b>{r1}</b> и ~{r2}~ (d20 с помехой)"
+            if r1 <= r2:
+                orig_chosen = r1
+                if min_val > 0 and orig_chosen < min_val:
+                    r1_str = f"<b>{r1} ➔ {min_val}</b>"
+                    chosen = min_val
+                else:
+                    r1_str = f"<b>{r1}</b>"
+                    chosen = orig_chosen
+                r2_str = f"~{r2}~"
             else:
-                return chosen, f"~{r1}~ и <b>{r2}</b> (d20 с помехой)"
+                orig_chosen = r2
+                if min_val > 0 and orig_chosen < min_val:
+                    r2_str = f"<b>{r2} ➔ {min_val}</b>"
+                    chosen = min_val
+                else:
+                    r2_str = f"<b>{r2}</b>"
+                    chosen = orig_chosen
+                r1_str = f"~{r1}~"
+            return chosen, f"{r1_str} и {r2_str} (d20 с помехой)"
             
         r = random.randint(1, 20)
+        if min_val > 0 and r < min_val:
+            return min_val, f"<b>{r} ➔ {min_val}</b> (d20)"
         return r, f"<b>{r}</b> (d20)"
 
     # Дополнительные строки вывода
@@ -759,7 +808,21 @@ async def evaluate_check_for_character(
         elif prof_level == "half":
             added_half = pb // 2
             
-        d20_roll, roll_text = await make_d20_roll()
+        # Получаем настройки минимального броска
+        min_rolls = {}
+        full_data = character.get("full_data", {})
+        if isinstance(full_data, dict):
+            min_rolls = full_data.get("min_rolls", {}) or full_data.get("minRolls", {})
+        elif isinstance(full_data, str):
+            try:
+                fd_dict = json.loads(full_data)
+                min_rolls = fd_dict.get("min_rolls", {}) or fd_dict.get("minRolls", {})
+            except Exception:
+                pass
+                
+        min_val = min_rolls.get(skill_name, 0)
+            
+        d20_roll, roll_text = await make_d20_roll(min_val=min_val)
         total = d20_roll + modifier + added_pb + added_exp + added_half + custom_mod
         
         pb_text = ""
@@ -1261,6 +1324,7 @@ async def _send_roll_result(message: Message, result_data: dict, character: Opti
 
 def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "normal") -> dict:
     """Выполняет вычисления D&D броска для указанного персонажа и типа проверки."""
+    r1, r2 = 0, 0
     clean_text = check_text.lower().strip()
     
     # 1. Считываем преимущество/помеху
@@ -1389,9 +1453,46 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
         elif prof_level == "half":
             added_half = pb // 2
             
-        total = chosen_roll + modifier + added_pb + added_exp + added_half + custom_mod
+        # Получаем настройки минимального броска
+        min_rolls = {}
+        full_data = character.get("full_data", {})
+        if isinstance(full_data, dict):
+            min_rolls = full_data.get("min_rolls", {}) or full_data.get("minRolls", {})
+        elif isinstance(full_data, str):
+            try:
+                fd_dict = json.loads(full_data)
+                min_rolls = fd_dict.get("min_rolls", {}) or fd_dict.get("minRolls", {})
+            except Exception:
+                pass
+                
+        min_val = min_rolls.get(skill_name, 0)
         
-        detail_parts = [roll_desc, f"{format_mod(modifier)} ({attr_info['name']})"]
+        local_chosen_roll = chosen_roll
+        local_roll_desc = roll_desc
+        
+        if min_val > 0:
+            if is_passive:
+                if min_val > 10:
+                    local_chosen_roll = min_val
+                    local_roll_desc = f"Пассивное значение: {min_val} (минимум {min_val})"
+            elif chosen_roll < min_val:
+                local_chosen_roll = min_val
+                if has_advantage and not has_disadvantage:
+                    if r1 >= r2:
+                        local_roll_desc = f"<b>{r1} ➔ {min_val}</b> и ~{r2}~ (d20 с преимуществом)"
+                    else:
+                        local_roll_desc = f"~{r1}~ и <b>{r2} ➔ {min_val}</b> (d20 с преимуществом)"
+                elif has_disadvantage and not has_advantage:
+                    if r1 <= r2:
+                        local_roll_desc = f"<b>{r1} ➔ {min_val}</b> и ~{r2}~ (d20 с помехой)"
+                    else:
+                        local_roll_desc = f"~{r1}~ и <b>{r2} ➔ {min_val}</b> (d20 с помехой)"
+                else:
+                    local_roll_desc = f"<b>{r1} ➔ {min_val}</b> (d20)"
+            
+        total = local_chosen_roll + modifier + added_pb + added_exp + added_half + custom_mod
+        
+        detail_parts = [local_roll_desc, f"{format_mod(modifier)} ({attr_info['name']})"]
         if added_pb:
             detail_parts.append(f"+{added_pb} (владение)")
         if added_exp:
@@ -1406,7 +1507,7 @@ def perform_dnd_check_roll(character: dict, check_text: str, roll_mode: str = "n
             "total": total,
             "detail_str": detail_str,
             "sides": 20,
-            "result": chosen_roll if not is_passive else None
+            "result": local_chosen_roll if not is_passive else None
         }
         
     # C. Инструменты

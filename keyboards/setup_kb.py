@@ -1,6 +1,6 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from typing import List
+from typing import List, Dict
 
 # Списки всех доступных вариантов для создания персонажа
 ALL_SAVING_THROWS = [
@@ -156,6 +156,32 @@ def get_expertise_keyboard(skills: List[str], tools: List[str], selected_exp: Li
     )
     return builder.as_markup()
 
+def get_minimum_rolls_keyboard(skills: List[str], min_rolls: Dict[str, int]) -> InlineKeyboardMarkup:
+    """Генерирует клавиатуру для выбора минимального значения на кубе d20 для навыков."""
+    builder = InlineKeyboardBuilder()
+    
+    for skill in skills:
+        if skill in ALL_SKILLS:
+            idx = ALL_SKILLS.index(skill)
+            val = min_rolls.get(skill, 0)
+            status_text = f"Минимум: {val}" if val > 0 else "Нет"
+            builder.add(
+                InlineKeyboardButton(
+                    text=f"📜 {skill} ({status_text})",
+                    callback_data=f"cycle_min:{idx}"
+                )
+            )
+            
+    builder.adjust(1) # По 1 навыку в строке
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="Сохранить и продолжить ➡️",
+            callback_data="done_min_rolls"
+        )
+    )
+    return builder.as_markup()
+
 def get_classes_keyboard() -> InlineKeyboardMarkup:
     """Генерирует клавиатуру со списком 12 базовых классов D&D 2014."""
     builder = InlineKeyboardBuilder()
@@ -206,6 +232,9 @@ def get_edit_menu_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📜 Навыки", callback_data="edit_field:skills"),
         InlineKeyboardButton(text="🛠️ Инструменты", callback_data="edit_field:tools"),
         InlineKeyboardButton(text="🎓 Компетентность", callback_data="edit_field:expertise")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🎲 Минимальный куб", callback_data="edit_field:min_rolls")
     )
     builder.row(
         InlineKeyboardButton(text="⬅️ Назад к обзору", callback_data="edit_back_to_review")
