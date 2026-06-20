@@ -17,6 +17,7 @@ from keyboards.setup_kb import (
     get_skills_keyboard,
     get_tools_keyboard,
     get_expertise_keyboard,
+    get_minimum_rolls_keyboard,
     get_review_keyboard,
     get_edit_menu_keyboard,
     get_characters_management_keyboard,
