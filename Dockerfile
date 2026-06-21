@@ -1,5 +1,5 @@
-# Use official slim Python runtime as parent image
-FROM python:3.10-slim
+# Use official slim Python runtime as parent image from Google Container Registry mirror
+FROM mirror.gcr.io/library/python:3.10-slim
 
 # Prevent Python from writing .pyc files to disk
 ENV PYTHONDONTWRITEBYTECODE=1
