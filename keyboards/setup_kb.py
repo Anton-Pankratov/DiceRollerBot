@@ -371,13 +371,18 @@ def get_chat_topics_keyboard(topics: List[dict], show_back: bool = True) -> Inli
     """Генерирует клавиатуру со списком разделов (тем) чата для инлайн-привязки."""
     builder = InlineKeyboardBuilder()
     
+    import re
     for topic in topics:
         # thread_id в БД является хэшем (SHA-256). Так как лимит callback_data составляет 64 байта,
         # мы передаем только первые 8 символов хэша.
         short_hash = topic['thread_id'][:8]
+        display_name = topic['name']
+        if re.match(r'^[A-Za-z0-9а-яА-ЯёЁ]', display_name.strip()):
+            display_name = f"💬 {display_name}"
+            
         builder.add(
             InlineKeyboardButton(
-                text=f"💬 {topic['name']}",
+                text=display_name,
                 callback_data=f"select_topic_bind:{short_hash}"
             )
         )
@@ -483,6 +488,7 @@ def get_multi_topic_selection_keyboard(
     """Генерирует клавиатуру для множественного выбора тем с чекбоксами."""
     builder = InlineKeyboardBuilder()
     
+    import re
     for topic in topics:
         thread_hash = topic["thread_id"]
         short_hash = thread_hash[:8]
@@ -492,7 +498,13 @@ def get_multi_topic_selection_keyboard(
         
         from services.db import _hash_thread_id
         is_general = thread_hash == _hash_thread_id(None)
-        display_name = "🌐 Общий раздел / Вся группа" if is_general else f"💬 {topic['name']}"
+        
+        if is_general:
+            display_name = "🌐 Общий раздел / Вся группа"
+        else:
+            display_name = topic['name']
+            if re.match(r'^[A-Za-z0-9а-яА-ЯёЁ]', display_name.strip()):
+                display_name = f"💬 {display_name}"
         
         builder.row(
             InlineKeyboardButton(
