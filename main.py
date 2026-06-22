@@ -96,6 +96,31 @@ async def main():
     @dp.update.outer_middleware()
     async def log_updates(handler, event, data):
         logger.info(f"!!! RECEIVED UPDATE: {event}")
+        
+        # Автоматическое сохранение чатов и тем при любой активности
+        try:
+            message = None
+            if event.message:
+                message = event.message
+            elif event.edited_message:
+                message = event.edited_message
+            elif event.callback_query and event.callback_query.message:
+                message = event.callback_query.message
+                
+            if message and message.chat and message.chat.type in ["group", "supergroup"]:
+                chat_id = message.chat.id
+                thread_id = message.message_thread_id
+                chat_title = message.chat.title or "Групповой чат"
+                from services.db import DatabaseService, _hash_thread_id
+                await DatabaseService.save_chat_topic(chat_id, None, chat_title)
+                if thread_id is not None:
+                    topics = await DatabaseService.get_chat_topics(chat_id)
+                    hashed_thread = _hash_thread_id(thread_id)
+                    if not any(t["thread_id"] == hashed_thread for t in topics):
+                        await DatabaseService.save_chat_topic(chat_id, thread_id, f"Тема №{thread_id}")
+        except Exception as e:
+            logger.warning(f"Ошибка при автоматическом сохранении чата/темы в middleware: {e}")
+
         try:
             return await handler(event, data)
         except Exception as e:

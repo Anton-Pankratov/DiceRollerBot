@@ -446,3 +446,73 @@ def get_bindings_management_keyboard(bindings: List[dict]) -> InlineKeyboardMark
     
     return builder.as_markup()
 
+
+def get_chats_keyboard(user_chats: List[dict]) -> InlineKeyboardMarkup:
+    """Генерирует клавиатуру со списком доступных чатов для привязки."""
+    builder = InlineKeyboardBuilder()
+    
+    for chat in user_chats:
+        chat_prefix = chat["chat_id"][:8]
+        builder.row(
+            InlineKeyboardButton(
+                text=f"💬 {chat['name']}",
+                callback_data=f"bind_chat_select:{chat_prefix}"
+            )
+        )
+        
+    builder.row(
+        InlineKeyboardButton(
+            text="🔗 Привязать по ссылке/ID",
+            callback_data="bind_by_link"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Назад",
+            callback_data="manage_bindings_menu"
+        )
+    )
+    return builder.as_markup()
+
+
+def get_multi_topic_selection_keyboard(
+    topics: List[dict],
+    selected_topic_hashes: List[str],
+    chat_prefix: str
+) -> InlineKeyboardMarkup:
+    """Генерирует клавиатуру для множественного выбора тем с чекбоксами."""
+    builder = InlineKeyboardBuilder()
+    
+    for topic in topics:
+        thread_hash = topic["thread_id"]
+        short_hash = thread_hash[:8]
+        
+        is_selected = thread_hash in selected_topic_hashes
+        check_symbol = "✅" if is_selected else "◻️"
+        
+        from services.db import _hash_thread_id
+        is_general = thread_hash == _hash_thread_id(None)
+        display_name = "🌐 Общий раздел / Вся группа" if is_general else f"💬 {topic['name']}"
+        
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{check_symbol} {display_name}",
+                callback_data=f"bind_topic_toggle:{chat_prefix}:{short_hash}"
+            )
+        )
+        
+    builder.row(
+        InlineKeyboardButton(
+            text="✅ Готово",
+            callback_data=f"bind_topics_done:{chat_prefix}"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Назад",
+            callback_data="bind_menu"
+        )
+    )
+    return builder.as_markup()
+
+

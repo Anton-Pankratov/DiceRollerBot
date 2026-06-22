@@ -154,9 +154,19 @@ class DatabaseService:
                     chat_id TEXT NOT NULL,               -- Хешированный Chat ID
                     thread_id TEXT NOT NULL,             -- Хешированный Message Thread ID (или "None")
                     name TEXT NOT NULL,                  -- Понятное название темы
+                    real_chat_id TEXT,                   -- Зашифрованный настоящий Chat ID
+                    real_thread_id TEXT,                 -- Зашифрованный настоящий Thread ID
                     PRIMARY KEY (chat_id, thread_id)
                 )
             """)
+            
+            # Миграция: Проверка наличия колонок real_chat_id и real_thread_id
+            cursor_topics = await db.execute("PRAGMA table_info(chat_topics)")
+            topics_cols = await cursor_topics.fetchall()
+            if not any(col[1] == 'real_chat_id' for col in topics_cols):
+                await db.execute("ALTER TABLE chat_topics ADD COLUMN real_chat_id TEXT")
+            if not any(col[1] == 'real_thread_id' for col in topics_cols):
+                await db.execute("ALTER TABLE chat_topics ADD COLUMN real_thread_id TEXT")
 
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_settings (
@@ -450,11 +460,13 @@ class DatabaseService:
         """Сохраняет или обновляет название темы (раздела) чата (с хешированием chat_id и thread_id)."""
         hashed_chat = _hash_chat_id(chat_id)
         hashed_thread = _hash_thread_id(thread_id)
+        enc_chat = encrypt_val(str(chat_id))
+        enc_thread = encrypt_val(str(thread_id)) if thread_id is not None else None
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("""
-                INSERT OR REPLACE INTO chat_topics (chat_id, thread_id, name)
-                VALUES (?, ?, ?)
-            """, (hashed_chat, hashed_thread, name))
+                INSERT OR REPLACE INTO chat_topics (chat_id, thread_id, name, real_chat_id, real_thread_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (hashed_chat, hashed_thread, name, enc_chat, enc_thread))
             await db.commit()
         return True
 
@@ -469,7 +481,39 @@ class DatabaseService:
                 (hashed_chat,)
             )
             rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            res = []
+            for row in rows:
+                d = dict(row)
+                if d.get("real_thread_id"):
+                    try:
+                        d["real_thread_id_decrypted"] = int(decrypt_val(d["real_thread_id"]))
+                    except Exception:
+                        d["real_thread_id_decrypted"] = None
+                else:
+                    d["real_thread_id_decrypted"] = None
+                res.append(d)
+            return res
+
+    @staticmethod
+    async def get_all_chats() -> List[Dict[str, Any]]:
+        """Возвращает список всех зарегистрированных чатов (без разделов/тем)."""
+        none_thread_hash = _hash_thread_id(None)
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM chat_topics WHERE thread_id = ? AND real_chat_id IS NOT NULL",
+                (none_thread_hash,)
+            )
+            rows = await cursor.fetchall()
+            res = []
+            for row in rows:
+                d = dict(row)
+                try:
+                    d["real_chat_id"] = int(decrypt_val(d["real_chat_id"]))
+                except Exception:
+                    d["real_chat_id"] = None
+                res.append(d)
+            return res
 
     @staticmethod
     async def bind_character(

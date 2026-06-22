@@ -390,8 +390,10 @@ def format_roll_report(
     ]:
         title = title.replace(prefix_to_replace, "👁️ Пассивная ")
 
-    char_part = f" | {char_name}" if char_name and char_name not in ["DUMMY", "Без персонажа"] else ""
-    first_line = f"{user_mention} <b>{total}</b>{crit_suffix} ({title}{char_part})"
+    has_char = char_name and char_name not in ["DUMMY", "Без персонажа"]
+    name_to_show = char_name if has_char else user_mention
+    
+    first_line = f"{name_to_show}: <b>{total}</b>{crit_suffix} ({title})"
     second_line = f"<blockquote expandable>{formula_exp}</blockquote>"
     
     return f"{first_line}\n{second_line}"

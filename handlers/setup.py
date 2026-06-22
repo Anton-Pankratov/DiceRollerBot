@@ -29,6 +29,8 @@ from keyboards.setup_kb import (
     get_chat_topics_keyboard,
     get_bindings_management_keyboard,
     get_bind_options_keyboard,
+    get_chats_keyboard,
+    get_multi_topic_selection_keyboard,
     get_character_card_keyboard,
     ALL_TOOLS,
     ALL_SKILLS
@@ -52,11 +54,13 @@ class CharacterSetupStates(StatesGroup):
     selecting_tools = State()
     selecting_expertise = State()     # Выбор компетентности (навыки/инструменты)
     selecting_min_rolls = State()     # Выбор минимального d20 на навыки
+    waiting_for_min_roll_value = State() # Ожидание ввода минимального значения для навыка
     reviewing_data = State()          # Просмотр и подтверждение данных
     editing_menu = State()            # Выбор поля для изменения
     adding_custom_formula_name = State() # Шаг добавления названия формулы
     adding_custom_formula_expr = State() # Шаг добавления самой формулы
     waiting_for_binding_link = State()   # Шаг ожидания ссылки или ID для привязки персонажа
+    selecting_topics_for_binding = State() # Шаг выбора тем для привязки персонажа
 
 CREATION_STATES = {
     CharacterSetupStates.waiting_for_name.state,
@@ -1810,9 +1814,9 @@ async def finish_expertise(callback: CallbackQuery, state: FSMContext):
     )
     await state.update_data(last_bot_msg_id=sent_msg.message_id)
 
-# Обработка выбора минимального значения d20 на навыки
+# Обработка выбора минимального значения d20 на навыки (ожидание ввода)
 @router.callback_query(StateFilter(CharacterSetupStates.selecting_min_rolls), F.data.startswith("cycle_min:"))
-async def toggle_min(callback: CallbackQuery, state: FSMContext):
+async def start_editing_min_roll_value(callback: CallbackQuery, state: FSMContext):
     idx_str = callback.data.split(":", 1)[1]
     try:
         idx = int(idx_str)
@@ -1822,34 +1826,59 @@ async def toggle_min(callback: CallbackQuery, state: FSMContext):
         return
         
     data = await state.get_data()
-    min_rolls = dict(data.get("min_rolls", {}))
-    
+    min_rolls = data.get("min_rolls", {})
     current_val = min_rolls.get(skill, 0)
-    # Cycle: 0 -> 8 -> 10 -> 12 -> 0
-    if current_val == 0:
-        new_val = 8
-    elif current_val == 8:
-        new_val = 10
-    elif current_val == 10:
-        new_val = 12
-    else:
-        new_val = 0
-        
-    if new_val == 0:
-        min_rolls.pop(skill, None)
-    else:
-        min_rolls[skill] = new_val
-        
-    await state.update_data(min_rolls=min_rolls)
-    await callback.answer(f"{skill}: минимум {new_val}" if new_val > 0 else f"{skill}: без минимума")
     
+    await state.update_data(editing_min_roll_skill=skill)
+    await state.set_state(CharacterSetupStates.waiting_for_min_roll_value)
+    
+    await callback.answer()
+    
+    # Запрашиваем у пользователя число
+    sent_msg = await callback.message.answer(
+        f"🎲 Установка минимального значения куба d20 для навыка <b>{skill}</b>.\n"
+        f"Текущее значение: <b>{current_val or 'Нет'}</b>.\n\n"
+        f"Введите целое число от <b>1 до 20</b> (например: <code>10</code>) или <code>0</code>, чтобы убрать ограничение:"
+    )
+    await state.update_data(last_bot_msg_id=sent_msg.message_id)
+
+@router.message(StateFilter(CharacterSetupStates.waiting_for_min_roll_value))
+async def save_min_roll_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    skill = data.get("editing_min_roll_skill")
+    if not skill:
+        await message.reply("⚠️ Ошибка сессии: навык не указан. Попробуйте выбрать заново.")
+        await state.set_state(CharacterSetupStates.selecting_min_rolls)
+        return
+        
+    text = message.text.strip()
     try:
-        skills = data.get("skills", [])
-        await callback.message.edit_reply_markup(
-            reply_markup=get_minimum_rolls_keyboard(skills, min_rolls)
-        )
-    except Exception:
-        pass
+        val = int(text)
+        if not (0 <= val <= 20):
+            raise ValueError()
+    except ValueError:
+        await message.reply("⚠️ Некорректный ввод. Пожалуйста, введите целое число от 0 до 20:")
+        return
+        
+    min_rolls = dict(data.get("min_rolls", {}))
+    if val == 0:
+        min_rolls.pop(skill, None)
+        await message.reply(f"✅ Минимальный бросок для навыка «{skill}» сброшен.")
+    else:
+        min_rolls[skill] = val
+        await message.reply(f"✅ Минимальный бросок d20 для навыка «{skill}» установлен в {val}.")
+        
+    await state.update_data(min_rolls=min_rolls, editing_min_roll_skill=None)
+    await state.set_state(CharacterSetupStates.selecting_min_rolls)
+    
+    # Возвращаемся к списку навыков
+    skills = data.get("skills", [])
+    sent_msg = await message.answer(
+        "🎲 <b>Минимальное значение куба d20 для навыков</b>\n\n"
+        "Нажимайте на кнопки навыков, чтобы изменить или установить минимальный бросок.",
+        reply_markup=get_minimum_rolls_keyboard(skills, min_rolls)
+    )
+    await state.update_data(last_bot_msg_id=sent_msg.message_id)
 
 @router.callback_query(StateFilter(CharacterSetupStates.selecting_min_rolls), F.data == "done_min_rolls")
 async def done_min_rolls(callback: CallbackQuery, state: FSMContext):
@@ -2019,7 +2048,7 @@ async def handle_manage_bindings_menu(callback: CallbackQuery, state: FSMContext
 
 @router.callback_query(F.data == "bind_menu")
 async def handle_bind_menu(callback: CallbackQuery, state: FSMContext):
-    """Отображает опции привязки (к текущему чату/теме или по ссылке)."""
+    """Отображает список чатов, в которых состоят и пользователь, и бот, для привязки персонажа."""
     user_id = callback.from_user.id
     data = await state.get_data()
     char_name = data.get("binding_char_name")
@@ -2032,21 +2061,55 @@ async def handle_bind_menu(callback: CallbackQuery, state: FSMContext):
         char_name = active_char["name"]
         await state.update_data(binding_char_name=char_name)
 
-    await state.set_state(CharacterSetupStates.waiting_for_binding_link)
+    # Получаем все чаты из базы данных
+    chats = await DatabaseService.get_all_chats()
     
-    chat_type = callback.message.chat.type
+    # Фильтруем те, где и пользователь, и бот присутствуют
+    async def check_membership(chat):
+        real_id = chat["real_chat_id"]
+        if not real_id:
+            return None
+        try:
+            member = await callback.bot.get_chat_member(chat_id=real_id, user_id=user_id)
+            if member.status in ["creator", "administrator", "member"]:
+                return chat
+        except Exception:
+            pass
+        return None
+
+    results = await asyncio.gather(*(check_membership(c) for c in chats))
+    user_chats = [r for r in results if r is not None]
+    
+    # Сохраняем доступные чаты в данные состояния для последующего сопоставления по префиксу
+    await state.update_data(available_chats=user_chats)
+
+    if not user_chats:
+        text = (
+            f"🔗 <b>Привязка персонажа {char_name}</b>\n\n"
+            f"⚠️ <b>Общие чаты не найдены!</b>\n\n"
+            f"Бот еще не зарегистрировал ни одного общего чата с вами.\n"
+            f"Чтобы добавить чат в список:\n"
+            f"1. Добавьте бота в группу/супергруппу.\n"
+            f"2. Отправьте в эту группу любое сообщение.\n"
+            f"3. Вернитесь сюда и попробуйте снова."
+        )
+    else:
+        text = (
+            f"🔗 <b>Привязка персонажа {char_name}</b>\n\n"
+            f"Выберите чат, в котором вы хотите привязать персонажа:\n\n"
+            f"<i>Если в чате есть темы (форум), вы сможете выбрать конкретные разделы на следующем шаге.</i>"
+        )
+
     await callback.message.edit_text(
-        f"🔗 <b>Привязка персонажа {char_name}</b>\n\n"
-        f"Выберите способ привязки:\n"
-        f"• <b>Тема</b> — привязать к теме (разделу) текущего чата или к самому чату.\n"
-        f"• <b>Еще один чат</b> — привязать к другому чату по ссылке/ID (бот должен быть участником).",
-        reply_markup=get_bind_options_keyboard(chat_type)
+        text,
+        reply_markup=get_chats_keyboard(user_chats)
     )
     await callback.answer()
 
-@router.callback_query(StateFilter(CharacterSetupStates.waiting_for_binding_link), F.data == "bind_by_link")
+@router.callback_query(F.data == "bind_by_link")
 async def handle_bind_by_link(callback: CallbackQuery, state: FSMContext):
     """Запрашивает ссылку/ID чата для привязки."""
+    await state.set_state(CharacterSetupStates.waiting_for_binding_link)
     data = await state.get_data()
     char_name = data.get("binding_char_name")
     
@@ -2062,6 +2125,210 @@ async def handle_bind_by_link(callback: CallbackQuery, state: FSMContext):
         reply_markup=builder.as_markup()
     )
     await callback.answer()
+
+@router.callback_query(F.data.startswith("bind_chat_select:"))
+async def handle_bind_chat_select(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    chat_prefix = callback.data.split(":", 1)[1]
+    
+    fsm_data = await state.get_data()
+    available_chats = fsm_data.get("available_chats", [])
+    
+    # Ищем чат по префиксу
+    selected_chat = None
+    for chat in available_chats:
+        if chat["chat_id"].startswith(chat_prefix):
+            selected_chat = chat
+            break
+            
+    if not selected_chat:
+        chats = await DatabaseService.get_all_chats()
+        for chat in chats:
+            if chat["chat_id"].startswith(chat_prefix):
+                selected_chat = chat
+                break
+                
+    if not selected_chat or not selected_chat["real_chat_id"]:
+        await callback.answer("⚠️ Выбранный чат не найден или недоступен.", show_alert=True)
+        return
+        
+    real_chat_id = selected_chat["real_chat_id"]
+    chat_title = selected_chat["name"]
+    char_name = fsm_data.get("binding_char_name")
+    
+    # Получаем все темы для этого чата
+    topics = await DatabaseService.get_chat_topics(real_chat_id)
+    
+    # Проверяем, есть ли разделы (темы), отличные от None
+    from services.db import _hash_thread_id
+    has_topics = any(t["thread_id"] != _hash_thread_id(None) for t in topics)
+    
+    if not has_topics:
+        # Если тем нет, то сразу привязываем к самому чату (thread_id = None)
+        await DatabaseService.bind_character(
+            user_id, real_chat_id, None, char_name,
+            tg_username=callback.from_user.username,
+            tg_first_name=callback.from_user.first_name
+        )
+        await callback.answer(f"Персонаж {char_name} успешно привязан к чату {chat_title}!")
+        
+        # Перенаправляем обратно в меню управления привязками
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+            
+        bindings = await DatabaseService.get_character_bindings(user_id, char_name)
+        bindings_text = ""
+        if bindings:
+            for i, b in enumerate(bindings, 1):
+                name = b.get("topic_name") or f"Чат {b['chat_id'][:8]}..."
+                bindings_text += f"{i}. <b>{name}</b>\n"
+        else:
+            bindings_text = "<i>Привязки отсутствуют. Персонаж не привязан ни к одному чату/теме.</i>\n"
+            
+        text = (
+            f"✅ <b>Успешно привязано!</b>\n"
+            f"Персонаж <b>{char_name}</b> привязан к чату <b>{chat_title}</b>\n\n"
+            f"🔗 <b>Текущие привязки:</b>\n{bindings_text}\n"
+            f"Выберите действие ниже:"
+        )
+        sent_msg = await callback.message.answer(
+            text,
+            reply_markup=get_bindings_management_keyboard(bindings)
+        )
+        await state.update_data(last_bot_msg_id=sent_msg.message_id)
+        return
+        
+    # Если темы есть, переводим в режим выбора тем
+    await state.set_state(CharacterSetupStates.selecting_topics_for_binding)
+    
+    # Инициализируем выбранные темы: изначально пусто
+    selected_topic_hashes = []
+    
+    await state.update_data(
+        binding_chat_id=real_chat_id,
+        binding_chat_title=chat_title,
+        binding_chat_prefix=chat_prefix,
+        binding_chat_topics=topics,
+        selected_topic_hashes=selected_topic_hashes
+    )
+    
+    await callback.message.edit_text(
+        f"💬 <b>Выбор тем в чате {chat_title}</b>\n\n"
+        f"Выберите одну или несколько тем, к которым привязать персонажа <b>{char_name}</b>:\n\n"
+        f"<i>Вы можете привязать к нескольким темам одновременно. По окончании нажмите кнопку «Готово».</i>",
+        reply_markup=get_multi_topic_selection_keyboard(topics, selected_topic_hashes, chat_prefix)
+    )
+    await callback.answer()
+
+@router.callback_query(StateFilter(CharacterSetupStates.selecting_topics_for_binding), F.data.startswith("bind_topic_toggle:"))
+async def handle_bind_topic_toggle(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    chat_prefix = parts[1]
+    short_hash = parts[2]
+    
+    fsm_data = await state.get_data()
+    topics = fsm_data.get("binding_chat_topics", [])
+    selected_topic_hashes = fsm_data.get("selected_topic_hashes", [])
+    
+    # Ищем полную хэш-строку thread_id по short_hash
+    target_hash = None
+    for t in topics:
+        if t["thread_id"].startswith(short_hash):
+            target_hash = t["thread_id"]
+            break
+            
+    if not target_hash:
+        await callback.answer("⚠️ Выбранная тема не найдена.", show_alert=True)
+        return
+        
+    if target_hash in selected_topic_hashes:
+        selected_topic_hashes.remove(target_hash)
+    else:
+        selected_topic_hashes.append(target_hash)
+        
+    await state.update_data(selected_topic_hashes=selected_topic_hashes)
+    
+    await callback.message.edit_reply_markup(
+        reply_markup=get_multi_topic_selection_keyboard(topics, selected_topic_hashes, chat_prefix)
+    )
+    await callback.answer()
+
+@router.callback_query(StateFilter(CharacterSetupStates.selecting_topics_for_binding), F.data.startswith("bind_topics_done:"))
+async def handle_bind_topics_done(callback: CallbackQuery, state: FSMContext):
+    fsm_data = await state.get_data()
+    selected_topic_hashes = fsm_data.get("selected_topic_hashes", [])
+    topics = fsm_data.get("binding_chat_topics", [])
+    real_chat_id = fsm_data.get("binding_chat_id")
+    chat_title = fsm_data.get("binding_chat_title")
+    char_name = fsm_data.get("binding_char_name")
+    user_id = callback.from_user.id
+    
+    if not selected_topic_hashes:
+        await callback.answer("⚠️ Пожалуйста, выберите хотя бы один раздел или тему для привязки!", show_alert=True)
+        return
+        
+    from services.db import _hash_thread_id
+    none_thread_hash = _hash_thread_id(None)
+    
+    bound_details = []
+    
+    for thread_hash in selected_topic_hashes:
+        thread_id = None
+        topic_name = "Общий раздел"
+        
+        for t in topics:
+            if t["thread_id"] == thread_hash:
+                if thread_hash != none_thread_hash:
+                    if t.get("real_thread_id_decrypted") is not None:
+                        thread_id = t["real_thread_id_decrypted"]
+                    else:
+                        thread_id = DatabaseService.resolve_thread_id(thread_hash)
+                    topic_name = t["name"]
+                break
+                
+        await DatabaseService.bind_character(
+            user_id, real_chat_id, thread_id, char_name,
+            tg_username=callback.from_user.username,
+            tg_first_name=callback.from_user.first_name
+        )
+        bound_details.append(topic_name)
+        
+    await callback.answer(f"Персонаж {char_name} успешно привязан!")
+    
+    await state.set_state(None)
+    await state.update_data(
+        binding_chat_id=None,
+        binding_chat_title=None,
+        binding_chat_prefix=None,
+        binding_chat_topics=None,
+        selected_topic_hashes=None
+    )
+    
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+        
+    bindings = await DatabaseService.get_character_bindings(user_id, char_name)
+    bindings_text = ""
+    for i, b in enumerate(bindings, 1):
+        name = b.get("topic_name") or f"Чат {b['chat_id'][:8]}..."
+        bindings_text += f"{i}. <b>{name}</b>\n"
+        
+    joined_topics = ", ".join(bound_details)
+    text = (
+        f"✅ <b>Успешно привязано!</b>\n"
+        f"Персонаж <b>{char_name}</b> привязан к разделам чата {chat_title}: <b>{joined_topics}</b>\n\n"
+        f"🔗 <b>Текущие привязки:</b>\n{bindings_text}\n"
+        f"Выберите действие ниже:"
+    )
+    sent_msg = await callback.message.answer(
+        text,
+        reply_markup=get_bindings_management_keyboard(bindings)
+    )
+    await state.update_data(last_bot_msg_id=sent_msg.message_id)
 
 @router.callback_query(StateFilter(CharacterSetupStates.waiting_for_binding_link), F.data == "bind_current_chat_topics")
 async def handle_bind_current_chat_topics(callback: CallbackQuery, state: FSMContext):
