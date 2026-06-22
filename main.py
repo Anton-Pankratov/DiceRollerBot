@@ -62,7 +62,6 @@ async def main():
             BotCommand(command="keyboard", description="Настроить закрепление или скрытие игровой клавиатуры"),
             BotCommand(command="characters", description="Управление списком ваших персонажей"),
             BotCommand(command="create_character", description="Создать нового персонажа (мастер создания)"),
-            BotCommand(command="webapp", description="Открыть интерактивный Mini App для листов персонажей"),
             BotCommand(command="roll", description="Сделать быстрый бросок кубиков (например: /roll 2d6)"),
             BotCommand(command="gm_check", description="Призвать игроков пройти проверку (заявка от Мастера)"),
             BotCommand(command="meme", description="Найти DnD мем по ключевым словам или получить случайный"),
@@ -71,21 +70,13 @@ async def main():
         await bot.set_my_commands(commands=bot_commands)
         logger.info("Меню команд бота успешно зарегистрировано в Telegram.")
 
-        # Настройка Menu Button для WebApp
-        if config.WEBAPP_URL.startswith("https://"):
-            from aiogram.types import MenuButtonWebApp, WebAppInfo
-            await bot.set_chat_menu_button(
-                menu_button=MenuButtonWebApp(
-                    text="🎲 Лист героя",
-                    web_app=WebAppInfo(url=config.WEBAPP_URL)
-                )
-            )
-            logger.info("Menu Button для WebApp успешно настроен.")
-        else:
-            logger.warning(
-                "Кнопка меню WebApp не была настроена, так как Telegram требует HTTPS ссылку. "
-                "Пропишите HTTPS-адрес (например, от ngrok) в WEBAPP_URL в файле .env."
-            )
+        # Сброс Menu Button (скрываем WebApp кнопку)
+        from aiogram.types import MenuButtonDefault
+        try:
+            await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+            logger.info("Кнопка меню бота успешно сброшена на стандартную.")
+        except Exception as e:
+            logger.warning(f"Не удалось сбросить кнопку меню бота: {e}")
     except Exception as e:
         logger.warning(f"Не удалось установить описание или команды бота в Telegram: {e}")
     

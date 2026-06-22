@@ -37,7 +37,6 @@ def get_dice_keyboard(mode: str = "normal", is_persistent: bool = False) -> Repl
     from aiogram.types import WebAppInfo
     builder.row(
         KeyboardButton(text="👥 Персонажи"),
-        KeyboardButton(text="🌐 Лист героя (App)", web_app=WebAppInfo(url=config.WEBAPP_URL)),
         KeyboardButton(text="✍️ Кастомный дайс"),
         KeyboardButton(text="ℹ️ Справка")
     )

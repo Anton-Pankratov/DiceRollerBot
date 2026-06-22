@@ -291,30 +291,12 @@ async def handle_set_kbd_persistent(callback: CallbackQuery):
 async def cmd_webapp(message: Message):
     """
     Обработчик команды /webapp.
-    Отправляет инлайн-кнопку для запуска WebApp.
+    Сообщает, что графический интерфейс (Mini App) временно отключен.
     """
-    import config
-    from aiogram.types import WebAppInfo
-    
-    if config.WEBAPP_URL.startswith("https://"):
-        builder = InlineKeyboardBuilder()
-        builder.row(
-            InlineKeyboardButton(
-                text="🎲 Открыть лист персонажа",
-                web_app=WebAppInfo(url=config.WEBAPP_URL)
-            )
-        )
-        await message.reply(
-            "🧙‍♂️ <b>Интерактивный лист персонажа (Mini App)</b>\n\n"
-            "Нажмите кнопку ниже, чтобы открыть графический интерфейс управления вашими героями, "
-            "где вы можете легко создавать листы персонажей, редактировать характеристики и настраивать кастомные формулы!",
-            reply_markup=builder.as_markup()
-        )
-    else:
-        await message.reply(
-            "🧙‍♂️ <b>Интерактивный лист персонажа (Mini App)</b>\n\n"
-            "⚠️ <b>Внимание:</b> Для запуска Mini App внутри Telegram требуется безопасное подключение (<b>HTTPS</b>).\n\n"
-            f"1️⃣ Вы можете открыть и протестировать интерфейс в вашем обычном браузере на компьютере: {config.WEBAPP_URL}\n"
-            "2️⃣ Чтобы запустить приложение внутри Telegram, пробросьте локальный порт наружу (например: <code>ngrok http 8000</code>), "
-            "скопируйте ссылку <code>https://...</code> и вставьте её в переменную <code>WEBAPP_URL</code> в файле <code>.env</code>, после чего перезапустите бота."
-        )
+    await message.reply(
+        "🧙‍♂️ <b>Интерактивный лист персонажа (Mini App)</b>\n\n"
+        "⚠️ <b>Внимание:</b> Графический интерфейс в данный момент отключен. "
+        "Пожалуйста, используйте текстовое меню бота для управления вашими персонажами:\n"
+        "• /characters — управление персонажами\n"
+        "• /create_character — создание нового героя"
+    )
